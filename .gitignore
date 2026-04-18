@@ -4,20 +4,6 @@ build/
 # STM32CubeMX scratch file
 mx.scratch
 
-# CMake generated files
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-compile_commands.json
-CMakeLists.txt.user
-Makefile
-install_manifest.txt
-/*.ninja
-*.ninja*
-*.dir
-*.stamp
-*.d
-
 # Compiler/linker outputs
 *.elf
 *.axf
@@ -29,6 +15,14 @@ install_manifest.txt
 *.obj
 *.d
 *.su
+
+# Keil uVision generated build files
+MDK-ARM/**/*.crf
+MDK-ARM/**/*.dep
+MDK-ARM/**/*.lnp
+MDK-ARM/**/*.htm
+MDK-ARM/**/DebugConfig/
+MDK-ARM/**/JLinkLog.txt
 
 # IDE and editor
 .vscode/
