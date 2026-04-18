@@ -1,0 +1,162 @@
+[
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/main.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/main.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/gpio.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/gpio.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/tim.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/tim.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/stm32f1xx_hal_msp.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/stm32f1xx_hal_msp.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/stm32f1xx_it.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/stm32f1xx_it.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/system_stm32f1xx.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/system_stm32f1xx.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/syscalls.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/syscalls.c"
+    ]
+  },
+  {
+    "directory": "c:/Users/YunaCelisse/Desktop/Software/agv_cyf_3220433037",
+    "file": "Core/Src/sysmem.c",
+    "arguments": [
+      "clang",
+      "-x",
+      "c",
+      "-std=gnu11",
+      "-DUSE_HAL_DRIVER",
+      "-DSTM32F103xB",
+      "-I./.vscode/fake-libc",
+      "-I./Core/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc",
+      "-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+      "-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+      "-I./Drivers/CMSIS/Include",
+      "-c",
+      "Core/Src/sysmem.c"
+    ]
+  }
+]

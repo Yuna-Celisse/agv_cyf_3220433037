@@ -1,0 +1,11 @@
+-DSTM32F103xB
+-DUSE_HAL_DRIVER
+-std=gnu11
+-x
+c
+-I./.vscode/fake-libc
+-I./Core/Inc
+-I./Drivers/STM32F1xx_HAL_Driver/Inc
+-I./Drivers/STM32F1xx_HAL_Driver/Inc/Legacy
+-I./Drivers/CMSIS/Device/ST/STM32F1xx/Include
+-I./Drivers/CMSIS/Include

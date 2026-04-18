@@ -42,19 +42,57 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
+uint32_t last_ir_report_tick = 0;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+static void MX_USART3_UART_Init(void);
+static void IR_SendState(void);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static void MX_USART3_UART_Init(void)
+{
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+static void IR_SendState(void)
+{
+  uint8_t ir1 = (uint8_t)HAL_GPIO_ReadPin(IR1_GPIO_Port, IR1_Pin);
+  uint8_t ir2 = (uint8_t)HAL_GPIO_ReadPin(IR2_GPIO_Port, IR2_Pin);
+  uint8_t ir3 = (uint8_t)HAL_GPIO_ReadPin(IR3_GPIO_Port, IR3_Pin);
+  uint8_t ir4 = (uint8_t)HAL_GPIO_ReadPin(IR4_GPIO_Port, IR4_Pin);
+  uint8_t ir5 = (uint8_t)HAL_GPIO_ReadPin(IR5_GPIO_Port, IR5_Pin);
+
+  uint8_t tx_buf[] = "IR:0,0,0,0,0\r\n";
+  tx_buf[3] = (uint8_t)('0' + ir1);
+  tx_buf[5] = (uint8_t)('0' + ir2);
+  tx_buf[7] = (uint8_t)('0' + ir3);
+  tx_buf[9] = (uint8_t)('0' + ir4);
+  tx_buf[11] = (uint8_t)('0' + ir5);
+
+  HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 50U);
+}
 
 /* USER CODE END 0 */
 
@@ -89,11 +127,14 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1); //开启TIM1通道1 PWM
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2); //开启TIM1通道2 PWM
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);  //AIN1设置为高
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);  //AIN2设置为低
+  HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);  //BIN1设置为高
+  HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);  //BIN2设置为低
   HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET); //STBY设置为高，使能驱动
   /* USER CODE END 2 */
 
@@ -109,6 +150,12 @@ int main(void)
     uint16_t ccr2 = duty2 * (arr + 1);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr1);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ccr2);
+
+    if ((HAL_GetTick() - last_ir_report_tick) >= 100U)
+    {
+      last_ir_report_tick = HAL_GetTick();
+      IR_SendState();
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
