@@ -79,6 +79,14 @@ void Error_Handler(void);
 #define AIN1_GPIO_Port GPIOB
 #define AIN2_Pin GPIO_PIN_7
 #define AIN2_GPIO_Port GPIOB
+#define RC522_MISO_Pin GPIO_PIN_12
+#define RC522_MISO_GPIO_Port GPIOB
+#define RC522_MOSI_Pin GPIO_PIN_13
+#define RC522_MOSI_GPIO_Port GPIOB
+#define RC522_SCK_Pin GPIO_PIN_14
+#define RC522_SCK_GPIO_Port GPIOB
+#define RC522_SDA_Pin GPIO_PIN_15
+#define RC522_SDA_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

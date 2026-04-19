@@ -20,6 +20,7 @@
 #include "main.h"
 #include "tim.h"
 #include "gpio.h"
+#include "rc522.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -34,6 +35,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+#define HCSR04_TRIG_GPIO_Port GPIOB
+#define HCSR04_TRIG_Pin GPIO_PIN_0
+#define HCSR04_ECHO_GPIO_Port GPIOB
+#define HCSR04_ECHO_Pin GPIO_PIN_1
+#define HCSR04_MEASURE_INTERVAL_MS 100U
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,7 +52,12 @@
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-uint32_t last_ir_report_tick = 0;
+uint32_t last_rfid_poll_tick = 0;
+uint8_t last_uid[4] = {0};
+uint8_t has_last_uid = 0;
+uint32_t last_ultrasonic_poll_tick = 0;
+uint16_t last_distance_cm = 0;
+uint8_t has_last_distance = 0;
 
 /* USER CODE END PV */
 
@@ -53,7 +65,17 @@ uint32_t last_ir_report_tick = 0;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void MX_USART3_UART_Init(void);
-static void IR_SendState(void);
+static char HexDigit(uint8_t value);
+static uint8_t UidEquals(const uint8_t left[4], const uint8_t right[4]);
+static void UidCopy(uint8_t dst[4], const uint8_t src[4]);
+static void RFID_SendUid(const uint8_t uid[4]);
+static void RFID_SendNoCard(void);
+static void HCSR04_InitPins(void);
+static void HCSR04_DelayUs(uint16_t us);
+static uint8_t HCSR04_WaitPinState(GPIO_PinState target_state, uint32_t timeout_us);
+static uint8_t HCSR04_ReadDistanceCm(uint16_t *distance_cm);
+static void Ultrasonic_SendDistance(uint16_t distance_cm);
+static void Ultrasonic_SendNoEcho(void);
 
 /* USER CODE END PFP */
 
@@ -76,20 +98,156 @@ static void MX_USART3_UART_Init(void)
   }
 }
 
-static void IR_SendState(void)
+static char HexDigit(uint8_t value)
 {
-  uint8_t ir1 = (uint8_t)HAL_GPIO_ReadPin(IR1_GPIO_Port, IR1_Pin);
-  uint8_t ir2 = (uint8_t)HAL_GPIO_ReadPin(IR2_GPIO_Port, IR2_Pin);
-  uint8_t ir3 = (uint8_t)HAL_GPIO_ReadPin(IR3_GPIO_Port, IR3_Pin);
-  uint8_t ir4 = (uint8_t)HAL_GPIO_ReadPin(IR4_GPIO_Port, IR4_Pin);
-  uint8_t ir5 = (uint8_t)HAL_GPIO_ReadPin(IR5_GPIO_Port, IR5_Pin);
+  if (value < 10U)
+  {
+    return (char)('0' + value);
+  }
 
-  uint8_t tx_buf[] = "IR:0,0,0,0,0\r\n";
-  tx_buf[3] = (uint8_t)('0' + ir1);
-  tx_buf[5] = (uint8_t)('0' + ir2);
-  tx_buf[7] = (uint8_t)('0' + ir3);
-  tx_buf[9] = (uint8_t)('0' + ir4);
-  tx_buf[11] = (uint8_t)('0' + ir5);
+  return (char)('A' + (value - 10U));
+}
+
+static uint8_t UidEquals(const uint8_t left[4], const uint8_t right[4])
+{
+  uint8_t i;
+
+  for (i = 0U; i < 4U; i++)
+  {
+    if (left[i] != right[i])
+    {
+      return 0U;
+    }
+  }
+
+  return 1U;
+}
+
+static void UidCopy(uint8_t dst[4], const uint8_t src[4])
+{
+  uint8_t i;
+
+  for (i = 0U; i < 4U; i++)
+  {
+    dst[i] = src[i];
+  }
+}
+
+static void RFID_SendUid(const uint8_t uid[4])
+{
+  uint8_t i;
+  uint8_t tx_buf[] = "RFID:00000000\r\n";
+
+  for (i = 0U; i < 4U; i++)
+  {
+    tx_buf[5U + (2U * i)] = (uint8_t)HexDigit((uint8_t)((uid[i] >> 4U) & 0x0FU));
+    tx_buf[6U + (2U * i)] = (uint8_t)HexDigit((uint8_t)(uid[i] & 0x0FU));
+  }
+
+  HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 50U);
+}
+
+static void RFID_SendNoCard(void)
+{
+  uint8_t tx_buf[] = "RFID:NONE\r\n";
+
+  HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 50U);
+}
+
+static void HCSR04_InitPins(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = HCSR04_TRIG_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(HCSR04_TRIG_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_RESET);
+
+  GPIO_InitStruct.Pin = HCSR04_ECHO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(HCSR04_ECHO_GPIO_Port, &GPIO_InitStruct);
+}
+
+static void HCSR04_DelayUs(uint16_t us)
+{
+  uint16_t start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
+
+  while ((uint16_t)(__HAL_TIM_GET_COUNTER(&htim2) - start) < us)
+  {
+  }
+}
+
+static uint8_t HCSR04_WaitPinState(GPIO_PinState target_state, uint32_t timeout_us)
+{
+  uint16_t start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
+
+  while (HAL_GPIO_ReadPin(HCSR04_ECHO_GPIO_Port, HCSR04_ECHO_Pin) != target_state)
+  {
+    if ((uint16_t)(__HAL_TIM_GET_COUNTER(&htim2) - start) >= timeout_us)
+    {
+      return 0U;
+    }
+  }
+
+  return 1U;
+}
+
+static uint8_t HCSR04_ReadDistanceCm(uint16_t *distance_cm)
+{
+  uint16_t pulse_start;
+  uint32_t pulse_width_us;
+
+  if (distance_cm == 0)
+  {
+    return 0U;
+  }
+
+  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_RESET);
+  HCSR04_DelayUs(2U);
+  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_SET);
+  HCSR04_DelayUs(10U);
+  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_RESET);
+
+  if (HCSR04_WaitPinState(GPIO_PIN_SET, 30000U) == 0U)
+  {
+    return 0U;
+  }
+
+  pulse_start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
+  if (HCSR04_WaitPinState(GPIO_PIN_RESET, 30000U) == 0U)
+  {
+    return 0U;
+  }
+
+  pulse_width_us = (uint16_t)(__HAL_TIM_GET_COUNTER(&htim2) - pulse_start);
+  *distance_cm = (uint16_t)(pulse_width_us / 58U);
+  return 1U;
+}
+
+static void Ultrasonic_SendDistance(uint16_t distance_cm)
+{
+  uint8_t tx_buf[] = "US:000cm\r\n";
+
+  if (distance_cm > 999U)
+  {
+    distance_cm = 999U;
+  }
+
+  tx_buf[3] = (uint8_t)('0' + ((distance_cm / 100U) % 10U));
+  tx_buf[4] = (uint8_t)('0' + ((distance_cm / 10U) % 10U));
+  tx_buf[5] = (uint8_t)('0' + (distance_cm % 10U));
+
+  HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 50U);
+}
+
+static void Ultrasonic_SendNoEcho(void)
+{
+  uint8_t tx_buf[] = "US:NONE\r\n";
 
   HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 50U);
 }
@@ -135,14 +293,20 @@ int main(void)
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);  //AIN2设置为低
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);  //BIN1设置为高
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);  //BIN2设置为低
-  HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET); //STBY设置为高，使能驱动
+  // HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET); //STBY设置为高，使能驱动
+  RC522_Init();
+  HCSR04_InitPins();
+  if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  __HAL_TIM_SET_COUNTER(&htim2, 0U);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    float t = HAL_GetTick() * 0.001;
     float duty1 = 0.2;  //占空比1 左轮
     float duty2 = 0.2;  //占空比2 右轮
     uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);  //不用动
@@ -151,10 +315,46 @@ int main(void)
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr1);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ccr2);
 
-    if ((HAL_GetTick() - last_ir_report_tick) >= 100U)
+    if ((HAL_GetTick() - last_rfid_poll_tick) >= 100U)
     {
-      last_ir_report_tick = HAL_GetTick();
-      IR_SendState();
+      uint8_t uid[4];
+
+      last_rfid_poll_tick = HAL_GetTick();
+      if (RC522_ReadUid(uid) != 0U)
+      {
+        if ((has_last_uid == 0U) || (UidEquals(last_uid, uid) == 0U))
+        {
+          UidCopy(last_uid, uid);
+          has_last_uid = 1U;
+          RFID_SendUid(uid);
+        }
+      }
+      else if (has_last_uid != 0U)
+      {
+        has_last_uid = 0U;
+        RFID_SendNoCard();
+      }
+    }
+
+    if ((HAL_GetTick() - last_ultrasonic_poll_tick) >= HCSR04_MEASURE_INTERVAL_MS)
+    {
+      uint16_t distance_cm;
+
+      last_ultrasonic_poll_tick = HAL_GetTick();
+      if (HCSR04_ReadDistanceCm(&distance_cm) != 0U)
+      {
+        if ((has_last_distance == 0U) || (distance_cm != last_distance_cm))
+        {
+          last_distance_cm = distance_cm;
+          has_last_distance = 1U;
+          Ultrasonic_SendDistance(distance_cm);
+        }
+      }
+      else if (has_last_distance != 0U)
+      {
+        has_last_distance = 0U;
+        Ultrasonic_SendNoEcho();
+      }
     }
     /* USER CODE END WHILE */
 
