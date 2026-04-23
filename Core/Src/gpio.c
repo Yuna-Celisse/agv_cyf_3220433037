@@ -54,11 +54,8 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, BIN2_Pin|BIN1_Pin|STBY_Pin|AIN1_Pin
-                          |AIN2_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, RC522_MOSI_Pin|RC522_SCK_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, HCSR04_TRIG_Pin|RC522_MOSI_Pin|RC522_SCK_Pin|BIN2_Pin
+                          |BIN1_Pin|STBY_Pin|AIN1_Pin|AIN2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(RC522_SDA_GPIO_Port, RC522_SDA_Pin, GPIO_PIN_SET);
@@ -78,27 +75,31 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : BIN2_Pin BIN1_Pin STBY_Pin AIN1_Pin
+  /*Configure GPIO pins : HCSR04_TRIG_Pin RC522_MOSI_Pin RC522_SCK_Pin RC522_SDA_Pin
+                           BIN2_Pin BIN1_Pin STBY_Pin AIN1_Pin
                            AIN2_Pin */
-  GPIO_InitStruct.Pin = BIN2_Pin|BIN1_Pin|STBY_Pin|AIN1_Pin
+  GPIO_InitStruct.Pin = HCSR04_TRIG_Pin|RC522_MOSI_Pin|RC522_SCK_Pin|RC522_SDA_Pin
+                          |BIN2_Pin|BIN1_Pin|STBY_Pin|AIN1_Pin
                           |AIN2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : RC522_MOSI_Pin RC522_SCK_Pin RC522_SDA_Pin */
-  GPIO_InitStruct.Pin = RC522_MOSI_Pin|RC522_SCK_Pin|RC522_SDA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  /*Configure GPIO pin : HCSR04_ECHO_Pin */
+  GPIO_InitStruct.Pin = HCSR04_ECHO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(HCSR04_ECHO_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : RC522_MISO_Pin */
   GPIO_InitStruct.Pin = RC522_MISO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(RC522_MISO_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 1, 0);
 
 }
 

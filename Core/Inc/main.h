@@ -69,6 +69,19 @@ void Error_Handler(void);
 #define IR4_GPIO_Port GPIOA
 #define IR5_Pin GPIO_PIN_5
 #define IR5_GPIO_Port GPIOA
+#define HCSR04_TRIG_Pin GPIO_PIN_0
+#define HCSR04_TRIG_GPIO_Port GPIOB
+#define HCSR04_ECHO_Pin GPIO_PIN_1
+#define HCSR04_ECHO_GPIO_Port GPIOB
+#define HCSR04_ECHO_EXTI_IRQn EXTI1_IRQn
+#define RC522_MISO_Pin GPIO_PIN_12
+#define RC522_MISO_GPIO_Port GPIOB
+#define RC522_MOSI_Pin GPIO_PIN_13
+#define RC522_MOSI_GPIO_Port GPIOB
+#define RC522_SCK_Pin GPIO_PIN_14
+#define RC522_SCK_GPIO_Port GPIOB
+#define RC522_SDA_Pin GPIO_PIN_15
+#define RC522_SDA_GPIO_Port GPIOB
 #define BIN2_Pin GPIO_PIN_3
 #define BIN2_GPIO_Port GPIOB
 #define BIN1_Pin GPIO_PIN_4
@@ -79,14 +92,6 @@ void Error_Handler(void);
 #define AIN1_GPIO_Port GPIOB
 #define AIN2_Pin GPIO_PIN_7
 #define AIN2_GPIO_Port GPIOB
-#define RC522_MISO_Pin GPIO_PIN_12
-#define RC522_MISO_GPIO_Port GPIOB
-#define RC522_MOSI_Pin GPIO_PIN_13
-#define RC522_MOSI_GPIO_Port GPIOB
-#define RC522_SCK_Pin GPIO_PIN_14
-#define RC522_SCK_GPIO_Port GPIOB
-#define RC522_SDA_Pin GPIO_PIN_15
-#define RC522_SDA_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
