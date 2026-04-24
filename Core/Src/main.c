@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include "rc522.h"
+#include "oled.h"
 
 /* USER CODE END Includes */
 
@@ -83,6 +84,8 @@ static uint8_t uart3_tx_pending_buf[UART3_TX_BUF_SIZE] = {0};
 static uint16_t uart3_tx_active_len = 0U;
 static uint16_t uart3_tx_pending_len = 0U;
 static uint32_t last_ir_report_tick = 0U;
+static uint8_t oled_line[17] = {0};
+static uint8_t oled_last_line[17] = {0};
 
 /* USER CODE END PV */
 
@@ -101,6 +104,8 @@ static void Ultrasonic_SendDistance(uint16_t distance_cm);
 static void Ultrasonic_SendNoEcho(void);
 static uint8_t IR_ReadMask(void);
 static void IR_SendState(uint8_t mask);
+static void OLED_PushLine(const uint8_t *line, uint8_t len);
+static void OLED_RefreshLines(void);
 static void UART3_SendAsync(const uint8_t *data, uint16_t len);
 
 /* USER CODE END PFP */
@@ -289,42 +294,92 @@ static void IR_SendState(uint8_t mask)
   UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
 }
 
+static void OLED_PushLine(const uint8_t *line, uint8_t len)
+{
+  uint8_t i;
+
+  if (line == 0)
+  {
+    return;
+  }
+
+  if (len > 16U)
+  {
+    len = 16U;
+  }
+
+  for (i = 0U; i < 16U; i++)
+  {
+    oled_line[i] = ' ';
+  }
+
+  for (i = 0U; i < len; i++)
+  {
+    oled_line[i] = line[i];
+  }
+  oled_line[16] = '\0';
+}
+
+static void OLED_RefreshLines(void)
+{
+  OLED_ClearPage(0U);
+  OLED_ClearPage(1U);
+  OLED_ShowString(0U, 0U, oled_line, 16U);
+  OLED_RefreshPage(0U);
+  OLED_RefreshPage(1U);
+}
+
 static void UART3_SendAsync(const uint8_t *data, uint16_t len)
 {
-  uint16_t send_len;
+  uint8_t line_buf[16] = {0};
+  uint8_t i;
+  uint8_t out_len = 0U;
+  uint8_t changed = 0U;
 
   if ((data == 0) || (len == 0U))
   {
     return;
   }
 
-  send_len = len;
-  if (send_len > (uint16_t)sizeof(uart3_tx_active_buf))
+  for (i = 0U; i < len; i++)
   {
-    send_len = (uint16_t)sizeof(uart3_tx_active_buf);
+    if ((data[i] == '\r') || (data[i] == '\n'))
+    {
+      break;
+    }
+    if (out_len < (uint8_t)sizeof(line_buf))
+    {
+      line_buf[out_len++] = data[i];
+    }
   }
 
-  __disable_irq();
-  if ((uart3_tx_busy == 0U) && (huart3.gState == HAL_UART_STATE_READY))
+  if (out_len == 0U)
   {
-    memcpy(uart3_tx_active_buf, data, send_len);
-    uart3_tx_active_len = send_len;
-    uart3_tx_busy = 1U;
-    __enable_irq();
-
-    if (HAL_UART_Transmit_IT(&huart3, uart3_tx_active_buf, uart3_tx_active_len) != HAL_OK)
-    {
-      __disable_irq();
-      uart3_tx_busy = 0U;
-      __enable_irq();
-    }
     return;
   }
 
-  memcpy(uart3_tx_pending_buf, data, send_len);
-  uart3_tx_pending_len = send_len;
-  uart3_tx_pending = 1U;
-  __enable_irq();
+  OLED_PushLine(line_buf, out_len);
+
+  for (i = 0U; i < 16U; i++)
+  {
+    if (oled_line[i] != oled_last_line[i])
+    {
+      changed = 1U;
+      break;
+    }
+  }
+
+  if (changed == 0U)
+  {
+    return;
+  }
+
+  for (i = 0U; i < 17U; i++)
+  {
+    oled_last_line[i] = oled_line[i];
+  }
+
+  OLED_RefreshLines();
 }
 
 /* USER CODE END 0 */
@@ -362,6 +417,9 @@ int main(void)
   MX_TIM2_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  OLED_Init();
+  OLED_PushLine((const uint8_t *)"AGV OLED READY", 14U);
+  OLED_RefreshLines();
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);
