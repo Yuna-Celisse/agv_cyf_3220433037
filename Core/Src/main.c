@@ -44,6 +44,9 @@
 #define HCSR04_ECHO_Pin GPIO_PIN_1
 #define RFID_UID_LEN 4U
 #define UART3_TX_BUF_SIZE 32U
+#define ENABLE_RFID_UART_REPORT 0U
+#define ENABLE_ULTRASONIC_UART_REPORT 0U
+#define IR_REPORT_INTERVAL_MS 100U
 #define RFID_POLL_INTERVAL_MS 100U
 #define HCSR04_MEASURE_INTERVAL_MS 100U
 #define HCSR04_TIMEOUT_MS 35U
@@ -79,6 +82,7 @@ static uint8_t uart3_tx_active_buf[UART3_TX_BUF_SIZE] = {0};
 static uint8_t uart3_tx_pending_buf[UART3_TX_BUF_SIZE] = {0};
 static uint16_t uart3_tx_active_len = 0U;
 static uint16_t uart3_tx_pending_len = 0U;
+static uint32_t last_ir_report_tick = 0U;
 
 /* USER CODE END PV */
 
@@ -95,6 +99,8 @@ static void HCSR04_DelayUs(uint16_t us);
 static void HCSR04_StartMeasure(void);
 static void Ultrasonic_SendDistance(uint16_t distance_cm);
 static void Ultrasonic_SendNoEcho(void);
+static uint8_t IR_ReadMask(void);
+static void IR_SendState(uint8_t mask);
 static void UART3_SendAsync(const uint8_t *data, uint16_t len);
 
 /* USER CODE END PFP */
@@ -139,6 +145,7 @@ static void UidCopy(uint8_t dst[4], const uint8_t src[4])
 
 static void RFID_SendUid(const uint8_t uid[4])
 {
+#if ENABLE_RFID_UART_REPORT
   uint8_t i;
   uint8_t tx_buf[] = "RFID:00000000\r\n";
 
@@ -149,13 +156,18 @@ static void RFID_SendUid(const uint8_t uid[4])
   }
 
   UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
+#else
+  (void)uid;
+#endif
 }
 
 static void RFID_SendNoCard(void)
 {
+#if ENABLE_RFID_UART_REPORT
   uint8_t tx_buf[] = "RFID:NONE\r\n";
 
   UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
+#endif
 }
 
 static void HCSR04_InitPins(void)
@@ -210,6 +222,7 @@ static void HCSR04_StartMeasure(void)
 
 static void Ultrasonic_SendDistance(uint16_t distance_cm)
 {
+#if ENABLE_ULTRASONIC_UART_REPORT
   uint8_t tx_buf[] = "US:000cm\r\n";
 
   if (distance_cm > 999U)
@@ -222,12 +235,57 @@ static void Ultrasonic_SendDistance(uint16_t distance_cm)
   tx_buf[5] = (uint8_t)('0' + (distance_cm % 10U));
 
   UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
+#else
+  (void)distance_cm;
+#endif
 }
 
 static void Ultrasonic_SendNoEcho(void)
 {
+#if ENABLE_ULTRASONIC_UART_REPORT
   uint8_t tx_buf[] = "US:NONE\r\n";
 
+  UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
+#endif
+}
+
+static uint8_t IR_ReadMask(void)
+{
+  uint8_t mask = 0U;
+
+  if (HAL_GPIO_ReadPin(IR1_GPIO_Port, IR1_Pin) == GPIO_PIN_SET)
+  {
+    mask |= 0x01U;
+  }
+  if (HAL_GPIO_ReadPin(IR2_GPIO_Port, IR2_Pin) == GPIO_PIN_SET)
+  {
+    mask |= 0x02U;
+  }
+  if (HAL_GPIO_ReadPin(IR3_GPIO_Port, IR3_Pin) == GPIO_PIN_SET)
+  {
+    mask |= 0x04U;
+  }
+  if (HAL_GPIO_ReadPin(IR4_GPIO_Port, IR4_Pin) == GPIO_PIN_SET)
+  {
+    mask |= 0x08U;
+  }
+  if (HAL_GPIO_ReadPin(IR5_GPIO_Port, IR5_Pin) == GPIO_PIN_SET)
+  {
+    mask |= 0x10U;
+  }
+
+  return mask;
+}
+
+static void IR_SendState(uint8_t mask)
+{
+  uint8_t tx_buf[] = "IR:0,0,0,0,0\r\n";
+
+  tx_buf[3] = (uint8_t)('0' + ((mask >> 0U) & 0x01U));
+  tx_buf[5] = (uint8_t)('0' + ((mask >> 1U) & 0x01U));
+  tx_buf[7] = (uint8_t)('0' + ((mask >> 2U) & 0x01U));
+  tx_buf[9] = (uint8_t)('0' + ((mask >> 3U) & 0x01U));
+  tx_buf[11] = (uint8_t)('0' + ((mask >> 4U) & 0x01U));
   UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
 }
 
@@ -387,6 +445,13 @@ int main(void)
         Ultrasonic_SendNoEcho();
       }
     }
+
+    if ((HAL_GetTick() - last_ir_report_tick) >= IR_REPORT_INTERVAL_MS)
+    {
+      last_ir_report_tick = HAL_GetTick();
+      IR_SendState(IR_ReadMask());
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

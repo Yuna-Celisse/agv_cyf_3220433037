@@ -21,11 +21,6 @@
 | PC13 | LED | 输出 | 板载状态灯 |
 | PA8 | TIM1_CH1 | 复用推挽输出 | PWM 输出通道 A |
 | PA9 | TIM1_CH2 | 复用推挽输出 | PWM 输出通道 B |
-| PA1 | IR1 | 输入 | 红外循迹 out1 |
-| PA2 | IR2 | 输入 | 红外循迹 out2 |
-| PA3 | IR3 | 输入 | 红外循迹 out3 |
-| PA4 | IR4 | 输入 | 红外循迹 out4 |
-| PA5 | IR5 | 输入 | 红外循迹 out5 |
 | PB6 | AIN1 | 输出 | 电机 A 方向输入 1 |
 | PB7 | AIN2 | 输出 | 电机 A 方向输入 2 |
 | PB4 | BIN1 | 输出 | 电机 B 方向输入 1 |
@@ -48,14 +43,6 @@
 - PB4 -> BIN1
 - PB3 -> BIN2
 - PB5 -> STBY
-
-### 红外循迹
-
-- out1 -> PA1
-- out2 -> PA2
-- out3 -> PA3
-- out4 -> PA4
-- out5 -> PA5
 
 ### 串口调试（USART3）
 
