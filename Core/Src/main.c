@@ -53,6 +53,15 @@
 #define HCSR04_TIMEOUT_MS 35U
 #define HCSR04_CM_PER_US_DIVISOR 58U
 #define MOTOR_DEFAULT_DUTY 0.2f
+#define LINE_PID_INTERVAL_MS 10U
+#define LINE_BASE_DUTY MOTOR_DEFAULT_DUTY
+#define LINE_MIN_DUTY 0.05f
+#define LINE_MAX_DUTY 0.65f
+#define LINE_PID_KP 0.14f
+#define LINE_PID_KI 0.00f
+#define LINE_PID_KD 0.10f
+#define LINE_PID_I_LIMIT 1.50f
+#define IR_ACTIVE_LOW 1U
 
 /* USER CODE END PD */
 
@@ -86,6 +95,14 @@ static uint16_t uart3_tx_pending_len = 0U;
 static uint32_t last_ir_report_tick = 0U;
 static uint8_t oled_line[17] = {0};
 static uint8_t oled_last_line[17] = {0};
+static uint8_t oled_rfid_line[17] = {0};
+static uint8_t oled_last_rfid_line[17] = {0};
+static uint32_t last_line_pid_tick = 0U;
+static float line_pid_integral = 0.0f;
+static float line_pid_last_error = 0.0f;
+static uint8_t line_pid_has_error = 0U;
+
+#define OLED_TEXT_X_OFFSET 16U
 
 /* USER CODE END PV */
 
@@ -104,7 +121,14 @@ static void Ultrasonic_SendDistance(uint16_t distance_cm);
 static void Ultrasonic_SendNoEcho(void);
 static uint8_t IR_ReadMask(void);
 static void IR_SendState(uint8_t mask);
+static uint8_t IR_NormalizeMask(uint8_t raw_mask);
+static uint8_t IR_ComputeError(uint8_t raw_mask, float *error);
+static float ClampFloat(float value, float min_value, float max_value);
+static void Motor_SetDuty(float duty_left, float duty_right);
 static void OLED_PushLine(const uint8_t *line, uint8_t len);
+static void OLED_PushRfidLine(const uint8_t *line, uint8_t len);
+static void OLED_RefreshMainLine(void);
+static void OLED_RefreshRfidLine(void);
 static void OLED_RefreshLines(void);
 static void UART3_SendAsync(const uint8_t *data, uint16_t len);
 
@@ -150,8 +174,37 @@ static void UidCopy(uint8_t dst[4], const uint8_t src[4])
 
 static void RFID_SendUid(const uint8_t uid[4])
 {
-#if ENABLE_RFID_UART_REPORT
   uint8_t i;
+  uint8_t display_buf[] = "IC:00000000";
+  uint8_t changed = 0U;
+
+  for (i = 0U; i < RFID_UID_LEN; i++)
+  {
+    display_buf[3U + (2U * i)] = (uint8_t)HexDigit((uint8_t)((uid[i] >> 4U) & 0x0FU));
+    display_buf[4U + (2U * i)] = (uint8_t)HexDigit((uint8_t)(uid[i] & 0x0FU));
+  }
+
+  OLED_PushRfidLine(display_buf, 11U);
+
+  for (i = 0U; i < 16U; i++)
+  {
+    if (oled_rfid_line[i] != oled_last_rfid_line[i])
+    {
+      changed = 1U;
+      break;
+    }
+  }
+
+  if (changed != 0U)
+  {
+    for (i = 0U; i < 17U; i++)
+    {
+      oled_last_rfid_line[i] = oled_rfid_line[i];
+    }
+    OLED_RefreshRfidLine();
+  }
+
+#if ENABLE_RFID_UART_REPORT
   uint8_t tx_buf[] = "RFID:00000000\r\n";
 
   for (i = 0U; i < RFID_UID_LEN; i++)
@@ -168,6 +221,29 @@ static void RFID_SendUid(const uint8_t uid[4])
 
 static void RFID_SendNoCard(void)
 {
+  uint8_t i;
+  uint8_t changed = 0U;
+
+  OLED_PushRfidLine((const uint8_t *)"IC:NONE", 7U);
+
+  for (i = 0U; i < 16U; i++)
+  {
+    if (oled_rfid_line[i] != oled_last_rfid_line[i])
+    {
+      changed = 1U;
+      break;
+    }
+  }
+
+  if (changed != 0U)
+  {
+    for (i = 0U; i < 17U; i++)
+    {
+      oled_last_rfid_line[i] = oled_rfid_line[i];
+    }
+    OLED_RefreshRfidLine();
+  }
+
 #if ENABLE_RFID_UART_REPORT
   uint8_t tx_buf[] = "RFID:NONE\r\n";
 
@@ -294,6 +370,79 @@ static void IR_SendState(uint8_t mask)
   UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
 }
 
+static uint8_t IR_NormalizeMask(uint8_t raw_mask)
+{
+#if IR_ACTIVE_LOW
+  return (uint8_t)((~raw_mask) & 0x1FU);
+#else
+  return (uint8_t)(raw_mask & 0x1FU);
+#endif
+}
+
+static uint8_t IR_ComputeError(uint8_t raw_mask, float *error)
+{
+  uint8_t mask;
+  int8_t i;
+  int16_t weighted_sum = 0;
+  int16_t hit_count = 0;
+  static const int8_t weights[5] = {-2, -1, 0, 1, 2};
+
+  if (error == 0)
+  {
+    return 0U;
+  }
+
+  mask = IR_NormalizeMask(raw_mask);
+
+  for (i = 0; i < 5; i++)
+  {
+    if ((mask & (uint8_t)(1U << i)) != 0U)
+    {
+      weighted_sum = (int16_t)(weighted_sum + weights[i]);
+      hit_count++;
+    }
+  }
+
+  if (hit_count == 0)
+  {
+    return 0U;
+  }
+
+  *error = (float)weighted_sum / (float)hit_count;
+  return 1U;
+}
+
+static float ClampFloat(float value, float min_value, float max_value)
+{
+  if (value < min_value)
+  {
+    return min_value;
+  }
+
+  if (value > max_value)
+  {
+    return max_value;
+  }
+
+  return value;
+}
+
+static void Motor_SetDuty(float duty_left, float duty_right)
+{
+  uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+  uint16_t ccr1;
+  uint16_t ccr2;
+
+  duty_left = ClampFloat(duty_left, 0.0f, 1.0f);
+  duty_right = ClampFloat(duty_right, 0.0f, 1.0f);
+
+  ccr1 = (uint16_t)(duty_left * (float)(arr + 1U));
+  ccr2 = (uint16_t)(duty_right * (float)(arr + 1U));
+
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr1);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ccr2);
+}
+
 static void OLED_PushLine(const uint8_t *line, uint8_t len)
 {
   uint8_t i;
@@ -308,25 +457,66 @@ static void OLED_PushLine(const uint8_t *line, uint8_t len)
     len = 16U;
   }
 
-  for (i = 0U; i < 16U; i++)
+  for (i = 0U; i < 17U; i++)
   {
-    oled_line[i] = ' ';
+    oled_line[i] = 0U;
   }
 
   for (i = 0U; i < len; i++)
   {
     oled_line[i] = line[i];
   }
-  oled_line[16] = '\0';
+  oled_line[len] = '\0';
+}
+
+static void OLED_PushRfidLine(const uint8_t *line, uint8_t len)
+{
+  uint8_t i;
+
+  if (line == 0)
+  {
+    return;
+  }
+
+  if (len > 16U)
+  {
+    len = 16U;
+  }
+
+  for (i = 0U; i < 17U; i++)
+  {
+    oled_rfid_line[i] = 0U;
+  }
+
+  for (i = 0U; i < len; i++)
+  {
+    oled_rfid_line[i] = line[i];
+  }
+  oled_rfid_line[len] = '\0';
+}
+
+static void OLED_RefreshMainLine(void)
+{
+  OLED_ClearPage(0U);
+  OLED_ClearPage(1U);
+  OLED_ShowString(OLED_TEXT_X_OFFSET, 0U, oled_line, 16U);
+  OLED_RefreshPage(0U);
+  OLED_RefreshPage(1U);
+}
+
+static void OLED_RefreshRfidLine(void)
+{
+  OLED_ClearPage(2U);
+  OLED_ClearPage(3U);
+  OLED_ShowString(OLED_TEXT_X_OFFSET, 16U, oled_rfid_line, 16U);
+  OLED_RefreshPage(2U);
+  OLED_RefreshPage(3U);
 }
 
 static void OLED_RefreshLines(void)
 {
-  OLED_ClearPage(0U);
-  OLED_ClearPage(1U);
-  OLED_ShowString(0U, 0U, oled_line, 16U);
-  OLED_RefreshPage(0U);
-  OLED_RefreshPage(1U);
+  OLED_RefreshMainLine();
+  OLED_RefreshRfidLine();
 }
 
 static void UART3_SendAsync(const uint8_t *data, uint16_t len)
@@ -379,7 +569,7 @@ static void UART3_SendAsync(const uint8_t *data, uint16_t len)
     oled_last_line[i] = oled_line[i];
   }
 
-  OLED_RefreshLines();
+  OLED_RefreshMainLine();
 }
 
 /* USER CODE END 0 */
@@ -419,6 +609,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   OLED_Init();
   OLED_PushLine((const uint8_t *)"AGV OLED READY", 14U);
+  OLED_PushRfidLine((const uint8_t *)"IC:NONE", 7U);
   OLED_RefreshLines();
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -426,7 +617,8 @@ int main(void)
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
-  // HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET); //STBY设置为高，使能驱动
+  HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET);
+  Motor_SetDuty(LINE_BASE_DUTY, LINE_BASE_DUTY);
   RC522_Init();
   HCSR04_InitPins();
   if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
@@ -440,13 +632,43 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    const float duty1 = MOTOR_DEFAULT_DUTY;
-    const float duty2 = MOTOR_DEFAULT_DUTY;
-    uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
-    uint16_t ccr1 = (uint16_t)(duty1 * (float)(arr + 1U));
-    uint16_t ccr2 = (uint16_t)(duty2 * (float)(arr + 1U));
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr1);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ccr2);
+    uint8_t ir_mask = IR_ReadMask();
+
+    if ((HAL_GetTick() - last_line_pid_tick) >= LINE_PID_INTERVAL_MS)
+    {
+      float dt_s = (float)LINE_PID_INTERVAL_MS / 1000.0f;
+      float error = 0.0f;
+      float derivative;
+      float correction;
+      float duty_left;
+      float duty_right;
+
+      last_line_pid_tick = HAL_GetTick();
+
+      if (IR_ComputeError(ir_mask, &error) == 0U)
+      {
+        if (line_pid_has_error != 0U)
+        {
+          error = line_pid_last_error;
+        }
+      }
+      else
+      {
+        line_pid_has_error = 1U;
+      }
+
+      line_pid_integral += error * dt_s;
+      line_pid_integral = ClampFloat(line_pid_integral, -LINE_PID_I_LIMIT, LINE_PID_I_LIMIT);
+
+      derivative = (error - line_pid_last_error) / dt_s;
+      correction = (LINE_PID_KP * error) + (LINE_PID_KI * line_pid_integral) + (LINE_PID_KD * derivative);
+      line_pid_last_error = error;
+
+      duty_left = ClampFloat(LINE_BASE_DUTY - correction, LINE_MIN_DUTY, LINE_MAX_DUTY);
+      duty_right = ClampFloat(LINE_BASE_DUTY + correction, LINE_MIN_DUTY, LINE_MAX_DUTY);
+
+      Motor_SetDuty(duty_left, duty_right);
+    }
 
     if ((HAL_GetTick() - last_rfid_poll_tick) >= RFID_POLL_INTERVAL_MS)
     {
@@ -507,7 +729,7 @@ int main(void)
     if ((HAL_GetTick() - last_ir_report_tick) >= IR_REPORT_INTERVAL_MS)
     {
       last_ir_report_tick = HAL_GetTick();
-      IR_SendState(IR_ReadMask());
+      IR_SendState(ir_mask);
     }
 
     /* USER CODE END WHILE */

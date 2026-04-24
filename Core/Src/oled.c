@@ -49,9 +49,11 @@ static void OLED_WritePageData(u8 page)
 
 static void OLED_SetPageAddress(u8 page)
 {
+	u8 col = (u8)OLED_COL_OFFSET;
+
 	OLED_WR_Byte((u8)(0xb0U + page), OLED_CMD);
-	OLED_WR_Byte(0x00U, OLED_CMD);
-	OLED_WR_Byte(0x10U, OLED_CMD);
+	OLED_WR_Byte((u8)(col & 0x0FU), OLED_CMD);
+	OLED_WR_Byte((u8)(((col >> 4U) & 0x0FU) | 0x10U), OLED_CMD);
 }
 
 //���Ժ���
@@ -494,9 +496,11 @@ void OLED_ScrollDisplay(u8 num,u8 space)
 //����д�����ݵ���ʼλ��
 void OLED_WR_BP(u8 x,u8 y)
 {
+	u8 col = (u8)(x + (u8)OLED_COL_OFFSET);
+
 	OLED_WR_Byte(0xb0+y,OLED_CMD);//��������ʼ��ַ
-	OLED_WR_Byte(((x&0xf0)>>4)|0x10,OLED_CMD);
-	OLED_WR_Byte((x&0x0f)|0x01,OLED_CMD);
+	OLED_WR_Byte((u8)(((col & 0xf0U)>>4) | 0x10U),OLED_CMD);
+	OLED_WR_Byte((u8)(col & 0x0fU),OLED_CMD);
 }
 
 //x0,y0���������

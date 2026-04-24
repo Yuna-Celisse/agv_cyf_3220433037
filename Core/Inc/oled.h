@@ -25,6 +25,7 @@
 #define OLED_I2C_ADDR_ALT 0x7AU
 #define OLED_I2C_TRY_ALT_ADDR 1U
 #define OLED_I2C_DELAY_CYCLES 8U
+#define OLED_COL_OFFSET 0U
 
 
 #define OLED_CMD  0	//д����
