@@ -124,6 +124,7 @@ static void IR_SendState(uint8_t mask);
 static uint8_t IR_NormalizeMask(uint8_t raw_mask);
 static uint8_t IR_ComputeError(uint8_t raw_mask, float *error);
 static float ClampFloat(float value, float min_value, float max_value);
+static void Motor_SetEnable(uint8_t enable);
 static void Motor_SetDuty(float duty_left, float duty_right);
 static void OLED_PushLine(const uint8_t *line, uint8_t len);
 static void OLED_PushRfidLine(const uint8_t *line, uint8_t len);
@@ -427,6 +428,18 @@ static float ClampFloat(float value, float min_value, float max_value)
   return value;
 }
 
+static void Motor_SetEnable(uint8_t enable)
+{
+  if (enable != 0U)
+  {
+    HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET);
+    return;
+  }
+
+  Motor_SetDuty(0.0f, 0.0f);
+  HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_RESET);
+}
+
 static void Motor_SetDuty(float duty_left, float duty_right)
 {
   uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
@@ -617,7 +630,7 @@ int main(void)
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET);
+  Motor_SetEnable(1U);
   Motor_SetDuty(LINE_BASE_DUTY, LINE_BASE_DUTY);
   RC522_Init();
   HCSR04_InitPins();
