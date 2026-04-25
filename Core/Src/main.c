@@ -147,7 +147,7 @@ static void Servo_Init(void)
   return;
 #endif
 
-  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -165,7 +165,7 @@ static void Servo_SetAngle(uint16_t angle_deg)
   }
 
   servo_pulse_us = (uint16_t)(SERVO_MIN_PULSE_US + ((pulse_span * clamped_angle) / 180U));
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, servo_pulse_us);
+  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, servo_pulse_us);
 }
 
 static void Servo_Task(void)
@@ -230,6 +230,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_TIM4_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 #if ENABLE_NON_MOTION_FEATURES
