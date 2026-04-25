@@ -43,13 +43,25 @@
 #define HCSR04_ECHO_GPIO_Port GPIOB
 #define HCSR04_ECHO_Pin GPIO_PIN_1
 #define RFID_UID_LEN 4U
-#define ENABLE_RFID_UART_REPORT 1U
-#define ENABLE_ULTRASONIC_UART_REPORT 0U
+#define ENABLE_RFID_UART_REPORT 0U
+#define ENABLE_ULTRASONIC_UART_REPORT 1U
 #define RFID_POLL_INTERVAL_MS 100U
 #define CARD_STANDBY_DELAY_MS 5000U
 #define HCSR04_MEASURE_INTERVAL_MS 100U
 #define HCSR04_TIMEOUT_MS 35U
 #define HCSR04_CM_PER_US_DIVISOR 58U
+#define HCSR04_MIN_VALID_US 100U
+#define HCSR04_MAX_VALID_US 25000U
+#define HCSR04_MOVE_INTERVAL_MS 140U
+#define HCSR04_MAX_JUMP_CM 25U
+#define RESTORE_STAGE_US_ONLY 0U
+#define RESTORE_STAGE_SENSOR_UI 1U
+#define RESTORE_STAGE_FULL 2U
+#define SYSTEM_RESTORE_STAGE RESTORE_STAGE_FULL
+#define ENABLE_ULTRASONIC_ONLY ((SYSTEM_RESTORE_STAGE) == RESTORE_STAGE_US_ONLY)
+#define ENABLE_NON_MOTION_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_SENSOR_UI)
+#define ENABLE_MOTION_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
+#define ENABLE_RFID_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
 /* Duty values are in per-mille: 0..1000 */
 #define LINE_BASE_DUTY_PM 160U
 #define LINE_MIN_DUTY_PM 50U
@@ -93,6 +105,7 @@ static uint8_t has_last_uid = 0U;
 static uint32_t last_ultrasonic_poll_tick = 0U;
 static uint16_t last_distance_cm = 0U;
 static uint8_t has_last_distance = 0U;
+static uint8_t ultrasonic_jump_reject_count = 0U;
 static volatile uint8_t hcsr04_busy = 0U;
 static volatile uint8_t hcsr04_wait_falling = 0U;
 static volatile uint8_t hcsr04_result_ready = 0U;
@@ -721,20 +734,28 @@ int main(void)
   MX_TIM3_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+#if ENABLE_NON_MOTION_FEATURES
   OLED_Init();
   OLED_ShowSwipePrompt();
+#if ENABLE_RFID_FEATURES
+  RC522_Init();
+#endif
+#endif
+#if ENABLE_MOTION_FEATURES
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   Motor_SetForwardDirection();
   Motor_SetEnable(0U);
-  RC522_Init();
+#endif
   HCSR04_InitPins();
   if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
   {
     Error_Handler();
   }
   __HAL_TIM_SET_COUNTER(&htim2, 0U);
+#if ENABLE_MOTION_FEATURES
   Servo_Init();
+#endif
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -744,9 +765,16 @@ int main(void)
     uint8_t ir_mask = IR_ReadMask();
     uint32_t now = HAL_GetTick();
 
+#if ENABLE_MOTION_FEATURES
     Servo_Task();
+#endif
 
-    if ((now - last_rfid_poll_tick) >= RFID_POLL_INTERVAL_MS)
+#if ENABLE_NON_MOTION_FEATURES
+#if ENABLE_RFID_FEATURES
+    if (((now - last_rfid_poll_tick) >= RFID_POLL_INTERVAL_MS) &&
+        (hcsr04_busy == 0U) &&
+    (vehicle_state == VEHICLE_WAIT_CARD) &&
+    (target_card == CARD_ID_NONE))
     {
       uint8_t uid[4];
 
@@ -773,8 +801,27 @@ int main(void)
         has_last_uid = 0U;
       }
     }
+#endif
+#endif
 
-    if ((now - last_ultrasonic_poll_tick) >= HCSR04_MEASURE_INTERVAL_MS)
+    uint32_t ultrasonic_interval_ms = HCSR04_MEASURE_INTERVAL_MS;
+    uint8_t ultrasonic_enabled = 1U;
+
+  #if ENABLE_MOTION_FEATURES
+    if (vehicle_state == VEHICLE_WAIT_CARD)
+    {
+      ultrasonic_enabled = 0U;
+    }
+
+    if ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
+      (vehicle_state == VEHICLE_AVOID_RIGHT) ||
+      (vehicle_state == VEHICLE_AVOID_LEFT))
+    {
+      ultrasonic_interval_ms = HCSR04_MOVE_INTERVAL_MS;
+    }
+  #endif
+
+    if ((ultrasonic_enabled != 0U) && ((now - last_ultrasonic_poll_tick) >= ultrasonic_interval_ms))
     {
       last_ultrasonic_poll_tick = now;
       HCSR04_StartMeasure();
@@ -789,17 +836,71 @@ int main(void)
     if (hcsr04_result_ready != 0U)
     {
       uint16_t distance_cm;
+      uint16_t pulse_width_us;
 
       hcsr04_result_ready = 0U;
-      distance_cm = (uint16_t)(hcsr04_pulse_width_us / HCSR04_CM_PER_US_DIVISOR);
-      last_distance_cm = distance_cm;
-      has_last_distance = 1U;
+      pulse_width_us = hcsr04_pulse_width_us;
+
+      if ((pulse_width_us >= HCSR04_MIN_VALID_US) && (pulse_width_us <= HCSR04_MAX_VALID_US))
+      {
+        distance_cm = (uint16_t)(pulse_width_us / HCSR04_CM_PER_US_DIVISOR);
+
+#if ENABLE_MOTION_FEATURES
+        if ((has_last_distance != 0U) &&
+            ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
+             (vehicle_state == VEHICLE_AVOID_RIGHT) ||
+             (vehicle_state == VEHICLE_AVOID_LEFT)))
+        {
+          uint16_t diff_cm = (distance_cm > last_distance_cm) ?
+            (uint16_t)(distance_cm - last_distance_cm) :
+            (uint16_t)(last_distance_cm - distance_cm);
+
+          if (diff_cm > HCSR04_MAX_JUMP_CM)
+          {
+            if (ultrasonic_jump_reject_count < 2U)
+            {
+              ultrasonic_jump_reject_count++;
+              distance_cm = last_distance_cm;
+            }
+            else
+            {
+              ultrasonic_jump_reject_count = 0U;
+            }
+          }
+          else
+          {
+            ultrasonic_jump_reject_count = 0U;
+          }
+        }
+        else
+        {
+          ultrasonic_jump_reject_count = 0U;
+        }
+#endif
+
+        last_distance_cm = distance_cm;
+        has_last_distance = 1U;
+        Ultrasonic_SendDistance(distance_cm);
+      }
+      else
+      {
+        has_last_distance = 0U;
+        Ultrasonic_SendNoEcho();
+      }
     }
     else if (hcsr04_timeout_flag != 0U)
     {
       hcsr04_timeout_flag = 0U;
       has_last_distance = 0U;
+      Ultrasonic_SendNoEcho();
     }
+
+#if !ENABLE_MOTION_FEATURES
+  #if ENABLE_NON_MOTION_FEATURES
+    OLED_ShowDistance();
+  #endif
+    continue;
+#endif
 
     switch (vehicle_state)
     {
