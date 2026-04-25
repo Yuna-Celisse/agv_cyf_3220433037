@@ -406,6 +406,31 @@
               <FilePath>../Core/Src/main.c</FilePath>
             </File>
             <File>
+              <FileName>app_line.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_line.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_motor.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_oled_ui.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_oled_ui.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ultrasonic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_ultrasonic.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_rfid.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_rfid.c</FilePath>
+            </File>
+            <File>
               <FileName>gpio.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/gpio.c</FilePath>

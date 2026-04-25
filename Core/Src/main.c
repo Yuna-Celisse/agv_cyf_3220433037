@@ -27,6 +27,11 @@
 
 #include "rc522.h"
 #include "oled.h"
+#include "app_line.h"
+#include "app_motor.h"
+#include "app_oled_ui.h"
+#include "app_ultrasonic.h"
+#include "app_rfid.h"
 
 /* USER CODE END Includes */
 
@@ -38,20 +43,10 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define HCSR04_TRIG_GPIO_Port GPIOB
-#define HCSR04_TRIG_Pin GPIO_PIN_0
-#define HCSR04_ECHO_GPIO_Port GPIOB
-#define HCSR04_ECHO_Pin GPIO_PIN_1
-#define RFID_UID_LEN 4U
 #define ENABLE_RFID_UART_REPORT 0U
 #define ENABLE_ULTRASONIC_UART_REPORT 1U
-#define RFID_POLL_INTERVAL_MS 100U
 #define CARD_STANDBY_DELAY_MS 5000U
 #define HCSR04_MEASURE_INTERVAL_MS 100U
-#define HCSR04_TIMEOUT_MS 35U
-#define HCSR04_CM_PER_US_DIVISOR 58U
-#define HCSR04_MIN_VALID_US 100U
-#define HCSR04_MAX_VALID_US 25000U
 #define HCSR04_MOVE_INTERVAL_MS 140U
 #define HCSR04_MAX_JUMP_CM 25U
 #define RESTORE_STAGE_US_ONLY 0U
@@ -69,7 +64,6 @@
 #define LINE_PID_INTERVAL_MS 10U   /* control period */
 /* Integer proportional gain: correction_pm = error_x10 * LINE_KP_PM_PER_ERR10 */
 #define LINE_KP_PM_PER_ERR10 8
-#define IR_ACTIVE_LOW 1U
 #define SERVO_FRAME_MS 20U
 #define SERVO_MIN_PULSE_US 500U
 #define SERVO_MAX_PULSE_US 2500U
@@ -99,24 +93,10 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static uint32_t last_rfid_poll_tick = 0U;
-static uint8_t last_uid[RFID_UID_LEN] = {0};
-static uint8_t has_last_uid = 0U;
 static uint32_t last_ultrasonic_poll_tick = 0U;
 static uint16_t last_distance_cm = 0U;
 static uint8_t has_last_distance = 0U;
 static uint8_t ultrasonic_jump_reject_count = 0U;
-static volatile uint8_t hcsr04_busy = 0U;
-static volatile uint8_t hcsr04_wait_falling = 0U;
-static volatile uint8_t hcsr04_result_ready = 0U;
-static volatile uint16_t hcsr04_pulse_start = 0U;
-static volatile uint16_t hcsr04_pulse_width_us = 0U;
-static volatile uint32_t hcsr04_trigger_tick = 0U;
-static volatile uint8_t hcsr04_timeout_flag = 0U;
-static uint8_t oled_line[17] = {0};
-static uint8_t oled_last_line[17] = {0};
-static uint8_t oled_rfid_line[17] = {0};
-static uint8_t oled_last_rfid_line[17] = {0};
 static uint32_t last_line_pid_tick = 0U;
 static uint16_t servo_pulse_us = 1500U;
 
@@ -140,281 +120,25 @@ static uint8_t line_cross_latched = 0U;
 static uint32_t state_start_tick = 0U;
 static uint32_t stop_start_tick = 0U;
 
-static const uint8_t uid_card_a[RFID_UID_LEN] = {0x16U, 0x15U, 0x12U, 0x07U};
-static const uint8_t uid_card_b[RFID_UID_LEN] = {0x1EU, 0xF1U, 0x2BU, 0x07U};
-
-#define OLED_TEXT_X_OFFSET 16U
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static char HexDigit(uint8_t value);
-static uint8_t UidEquals(const uint8_t left[4], const uint8_t right[4]);
-static void UidCopy(uint8_t dst[4], const uint8_t src[4]);
-static void RFID_SendUid(const uint8_t uid[4]);
 static void HCSR04_InitPins(void);
-static void HCSR04_DelayUs(uint16_t us);
-static void HCSR04_StartMeasure(void);
-static void Ultrasonic_SendDistance(uint16_t distance_cm);
-static void Ultrasonic_SendNoEcho(void);
-static uint8_t IR_ReadMask(void);
-static uint8_t IR_NormalizeMask(uint8_t raw_mask);
-static uint8_t IR_ComputeErrorX10(uint8_t raw_mask, int16_t *error_x10);
 static void Servo_Init(void);
 static void Servo_SetAngle(uint16_t angle_deg);
 static void Servo_Task(void);
-static void Motor_SetEnable(uint8_t enable);
-static void Motor_SetForwardDirection(void);
-static void Motor_SetDuty(uint16_t duty_left_pm, uint16_t duty_right_pm);
-static void OLED_PushLine(const uint8_t *line, uint8_t len);
-static void OLED_PushRfidLine(const uint8_t *line, uint8_t len);
-static void OLED_RefreshMainLine(void);
-static void OLED_RefreshRfidLine(void);
-static void OLED_UpdateMainLine(void);
-static void OLED_UpdateRfidLine(void);
-static void OLED_ShowSwipePrompt(void);
-static void OLED_ShowTarget(uint8_t card_id);
-static void OLED_ShowDistance(void);
-static uint8_t ResolveCardId(const uint8_t uid[4]);
 static void StartMission(uint8_t card_id);
-static void UART3_SendAsync(const uint8_t *data, uint16_t len);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static char HexDigit(uint8_t value)
-{
-  if (value < 10U)
-  {
-    return (char)('0' + value);
-  }
-
-  return (char)('A' + (value - 10U));
-}
-
-static uint8_t UidEquals(const uint8_t left[4], const uint8_t right[4])
-{
-  uint8_t i;
-
-  for (i = 0U; i < RFID_UID_LEN; i++)
-  {
-    if (left[i] != right[i])
-    {
-      return 0U;
-    }
-  }
-
-  return 1U;
-}
-
-static void UidCopy(uint8_t dst[4], const uint8_t src[4])
-{
-  uint8_t i;
-
-  for (i = 0U; i < RFID_UID_LEN; i++)
-  {
-    dst[i] = src[i];
-  }
-}
-
-static void RFID_SendUid(const uint8_t uid[4])
-{
-  uint8_t i;
-  uint8_t display_buf[] = "IC:00000000";
-  uint8_t changed = 0U;
-
-  for (i = 0U; i < RFID_UID_LEN; i++)
-  {
-    display_buf[3U + (2U * i)] = (uint8_t)HexDigit((uint8_t)((uid[i] >> 4U) & 0x0FU));
-    display_buf[4U + (2U * i)] = (uint8_t)HexDigit((uint8_t)(uid[i] & 0x0FU));
-  }
-
-  OLED_PushRfidLine(display_buf, 11U);
-
-  for (i = 0U; i < 16U; i++)
-  {
-    if (oled_rfid_line[i] != oled_last_rfid_line[i])
-    {
-      changed = 1U;
-      break;
-    }
-  }
-
-  if (changed != 0U)
-  {
-    for (i = 0U; i < 17U; i++)
-    {
-      oled_last_rfid_line[i] = oled_rfid_line[i];
-    }
-    OLED_RefreshRfidLine();
-  }
-
-#if ENABLE_RFID_UART_REPORT
-  uint8_t tx_buf[] = "RFID:00000000\r\n";
-
-  for (i = 0U; i < RFID_UID_LEN; i++)
-  {
-    tx_buf[5U + (2U * i)] = (uint8_t)HexDigit((uint8_t)((uid[i] >> 4U) & 0x0FU));
-    tx_buf[6U + (2U * i)] = (uint8_t)HexDigit((uint8_t)(uid[i] & 0x0FU));
-  }
-
-  UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
-#else
-  (void)uid;
-#endif
-}
-
 static void HCSR04_InitPins(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  GPIO_InitStruct.Pin = HCSR04_TRIG_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(HCSR04_TRIG_GPIO_Port, &GPIO_InitStruct);
-  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_RESET);
-
-  GPIO_InitStruct.Pin = HCSR04_ECHO_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(HCSR04_ECHO_GPIO_Port, &GPIO_InitStruct);
-
-  HAL_NVIC_SetPriority(EXTI1_IRQn, 1U, 0U);
-  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
-}
-
-static void HCSR04_DelayUs(uint16_t us)
-{
-  uint16_t start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
-
-  while ((uint16_t)(__HAL_TIM_GET_COUNTER(&htim2) - start) < us)
-  {
-  }
-}
-
-static void HCSR04_StartMeasure(void)
-{
-  if (hcsr04_busy != 0U)
-  {
-    return;
-  }
-
-  hcsr04_busy = 1U;
-  hcsr04_wait_falling = 0U;
-  hcsr04_result_ready = 0U;
-  hcsr04_timeout_flag = 0U;
-  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_RESET);
-  HCSR04_DelayUs(2U);
-  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_SET);
-  HCSR04_DelayUs(10U);
-  HAL_GPIO_WritePin(HCSR04_TRIG_GPIO_Port, HCSR04_TRIG_Pin, GPIO_PIN_RESET);
-  hcsr04_trigger_tick = HAL_GetTick();
-}
-
-static void Ultrasonic_SendDistance(uint16_t distance_cm)
-{
-#if ENABLE_ULTRASONIC_UART_REPORT
-  uint8_t tx_buf[] = "US:000cm\r\n";
-
-  if (distance_cm > 999U)
-  {
-    distance_cm = 999U;
-  }
-
-  tx_buf[3] = (uint8_t)('0' + ((distance_cm / 100U) % 10U));
-  tx_buf[4] = (uint8_t)('0' + ((distance_cm / 10U) % 10U));
-  tx_buf[5] = (uint8_t)('0' + (distance_cm % 10U));
-
-  UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
-#else
-  (void)distance_cm;
-#endif
-}
-
-static void Ultrasonic_SendNoEcho(void)
-{
-#if ENABLE_ULTRASONIC_UART_REPORT
-  uint8_t tx_buf[] = "US:NONE\r\n";
-
-  UART3_SendAsync(tx_buf, (uint16_t)(sizeof(tx_buf) - 1U));
-#endif
-}
-
-static uint8_t IR_ReadMask(void)
-{
-  uint8_t mask = 0U;
-
-  if (HAL_GPIO_ReadPin(IR1_GPIO_Port, IR1_Pin) == GPIO_PIN_SET)
-  {
-    mask |= 0x01U;
-  }
-  if (HAL_GPIO_ReadPin(IR2_GPIO_Port, IR2_Pin) == GPIO_PIN_SET)
-  {
-    mask |= 0x02U;
-  }
-  if (HAL_GPIO_ReadPin(IR3_GPIO_Port, IR3_Pin) == GPIO_PIN_SET)
-  {
-    mask |= 0x04U;
-  }
-  if (HAL_GPIO_ReadPin(IR4_GPIO_Port, IR4_Pin) == GPIO_PIN_SET)
-  {
-    mask |= 0x08U;
-  }
-  if (HAL_GPIO_ReadPin(IR5_GPIO_Port, IR5_Pin) == GPIO_PIN_SET)
-  {
-    mask |= 0x10U;
-  }
-
-  return mask;
-}
-
-static uint8_t IR_NormalizeMask(uint8_t raw_mask)
-{
-#if IR_ACTIVE_LOW
-  return (uint8_t)((~raw_mask) & 0x1FU);
-#else
-  return (uint8_t)(raw_mask & 0x1FU);
-#endif
-}
-
-static uint8_t IR_ComputeErrorX10(uint8_t raw_mask, int16_t *error_x10)
-{
-  uint8_t mask;
-  int8_t i;
-  int16_t weighted_sum = 0;
-  int16_t hit_count = 0;
-  static const int8_t weights[5] = {-2, -1, 0, 1, 2};
-
-  if (error_x10 == 0)
-  {
-    return 0U;
-  }
-
-  mask = IR_NormalizeMask(raw_mask);
-
-  for (i = 0; i < 5; i++)
-  {
-    if ((mask & (uint8_t)(1U << i)) != 0U)
-    {
-      weighted_sum = (int16_t)(weighted_sum + weights[i]);
-      hit_count++;
-    }
-  }
-
-  if (hit_count == 0)
-  {
-    return 0U;
-  }
-
-  *error_x10 = (int16_t)((weighted_sum * 10) / hit_count);
-  return 1U;
+  AppUltrasonic_Init(ENABLE_ULTRASONIC_UART_REPORT);
 }
 
 static void Servo_Init(void)
@@ -449,222 +173,6 @@ static void Servo_Task(void)
   (void)servo_pulse_us;
 }
 
-static void Motor_SetEnable(uint8_t enable)
-{
-  if (enable != 0U)
-  {
-    HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_SET);
-    return;
-  }
-
-  Motor_SetDuty(0U, 0U);
-  HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_RESET);
-}
-
-static void Motor_SetForwardDirection(void)
-{
-  HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN2_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN1_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
-}
-
-static void Motor_SetDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
-{
-  uint32_t arr = (uint32_t)__HAL_TIM_GET_AUTORELOAD(&htim1);
-  uint16_t ccr1;
-  uint16_t ccr2;
-
-  if (duty_left_pm > 1000U)
-  {
-    duty_left_pm = 1000U;
-  }
-  if (duty_right_pm > 1000U)
-  {
-    duty_right_pm = 1000U;
-  }
-
-  ccr1 = (uint16_t)(((arr + 1U) * duty_left_pm) / 1000U);
-  ccr2 = (uint16_t)(((arr + 1U) * duty_right_pm) / 1000U);
-
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr1);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ccr2);
-}
-
-static void OLED_PushLine(const uint8_t *line, uint8_t len)
-{
-  uint8_t i;
-
-  if (line == 0)
-  {
-    return;
-  }
-
-  if (len > 16U)
-  {
-    len = 16U;
-  }
-
-  for (i = 0U; i < 17U; i++)
-  {
-    oled_line[i] = 0U;
-  }
-
-  for (i = 0U; i < len; i++)
-  {
-    oled_line[i] = line[i];
-  }
-  oled_line[len] = '\0';
-}
-
-static void OLED_PushRfidLine(const uint8_t *line, uint8_t len)
-{
-  uint8_t i;
-
-  if (line == 0)
-  {
-    return;
-  }
-
-  if (len > 16U)
-  {
-    len = 16U;
-  }
-
-  for (i = 0U; i < 17U; i++)
-  {
-    oled_rfid_line[i] = 0U;
-  }
-
-  for (i = 0U; i < len; i++)
-  {
-    oled_rfid_line[i] = line[i];
-  }
-  oled_rfid_line[len] = '\0';
-}
-
-static void OLED_RefreshMainLine(void)
-{
-  OLED_ClearPage(0U);
-  OLED_ClearPage(1U);
-  OLED_ShowString(OLED_TEXT_X_OFFSET, 0U, oled_line, 16U);
-  OLED_RefreshPage(0U);
-  OLED_RefreshPage(1U);
-}
-
-static void OLED_RefreshRfidLine(void)
-{
-  OLED_ClearPage(2U);
-  OLED_ClearPage(3U);
-  OLED_ShowString(OLED_TEXT_X_OFFSET, 16U, oled_rfid_line, 16U);
-  OLED_RefreshPage(2U);
-  OLED_RefreshPage(3U);
-}
-
-static void OLED_UpdateMainLine(void)
-{
-  uint8_t i;
-
-  for (i = 0U; i < 16U; i++)
-  {
-    if (oled_line[i] != oled_last_line[i])
-    {
-      for (i = 0U; i < 17U; i++)
-      {
-        oled_last_line[i] = oled_line[i];
-      }
-      OLED_RefreshMainLine();
-      return;
-    }
-  }
-}
-
-static void OLED_UpdateRfidLine(void)
-{
-  uint8_t i;
-
-  for (i = 0U; i < 16U; i++)
-  {
-    if (oled_rfid_line[i] != oled_last_rfid_line[i])
-    {
-      for (i = 0U; i < 17U; i++)
-      {
-        oled_last_rfid_line[i] = oled_rfid_line[i];
-      }
-      OLED_RefreshRfidLine();
-      return;
-    }
-  }
-}
-
-static void OLED_ShowSwipePrompt(void)
-{
-  OLED_PushLine((const uint8_t *)"SWIPE CARD", 10U);
-  OLED_PushRfidLine((const uint8_t *)"TARGET: -", 9U);
-  OLED_UpdateMainLine();
-  OLED_UpdateRfidLine();
-}
-
-static void OLED_ShowTarget(uint8_t card_id)
-{
-  if (card_id == CARD_ID_A)
-  {
-    OLED_PushRfidLine((const uint8_t *)"TARGET: A", 9U);
-  }
-  else if (card_id == CARD_ID_B)
-  {
-    OLED_PushRfidLine((const uint8_t *)"TARGET: B", 9U);
-  }
-  else
-  {
-    OLED_PushRfidLine((const uint8_t *)"TARGET: -", 9U);
-  }
-
-  OLED_UpdateRfidLine();
-}
-
-static void OLED_ShowDistance(void)
-{
-  uint8_t line_buf[] = "US:---cm";
-
-  if (has_last_distance != 0U)
-  {
-    uint16_t distance_cm = last_distance_cm;
-
-    if (distance_cm > 999U)
-    {
-      distance_cm = 999U;
-    }
-
-    line_buf[3] = (uint8_t)('0' + ((distance_cm / 100U) % 10U));
-    line_buf[4] = (uint8_t)('0' + ((distance_cm / 10U) % 10U));
-    line_buf[5] = (uint8_t)('0' + (distance_cm % 10U));
-  }
-
-  OLED_PushLine(line_buf, 8U);
-  OLED_UpdateMainLine();
-}
-
-static uint8_t ResolveCardId(const uint8_t uid[4])
-{
-  if (uid == 0)
-  {
-    return CARD_ID_NONE;
-  }
-
-  if (UidEquals(uid, uid_card_a) != 0U)
-  {
-    return CARD_ID_A;
-  }
-
-  if (UidEquals(uid, uid_card_b) != 0U)
-  {
-    return CARD_ID_B;
-  }
-
-  return CARD_ID_NONE;
-}
-
 static void StartMission(uint8_t card_id)
 {
   if ((card_id != CARD_ID_A) && (card_id != CARD_ID_B))
@@ -681,21 +189,11 @@ static void StartMission(uint8_t card_id)
   last_line_pid_tick = 0U;
   vehicle_state = VEHICLE_CARD_STANDBY;
   state_start_tick = HAL_GetTick();
-  Motor_SetForwardDirection();
-  Motor_SetEnable(0U);
-  Motor_SetDuty(0U, 0U);
+  AppMotor_SetForwardDirection();
+  AppMotor_SetEnable(0U);
+  AppMotor_SetDuty(0U, 0U);
   Servo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
-  OLED_ShowTarget(card_id);
-}
-
-static void UART3_SendAsync(const uint8_t *data, uint16_t len)
-{
-  if ((data == 0) || (len == 0U))
-  {
-    return;
-  }
-
-  (void)HAL_UART_Transmit(&huart3, (uint8_t *)data, len, 20U);
+  AppOled_ShowTarget(card_id);
 }
 
 /* USER CODE END 0 */
@@ -736,16 +234,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
 #if ENABLE_NON_MOTION_FEATURES
   OLED_Init();
-  OLED_ShowSwipePrompt();
+  AppOled_ShowSwipePrompt();
 #if ENABLE_RFID_FEATURES
-  RC522_Init();
+  AppRfid_Init();
 #endif
 #endif
 #if ENABLE_MOTION_FEATURES
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  Motor_SetForwardDirection();
-  Motor_SetEnable(0U);
+  AppMotor_SetForwardDirection();
+  AppMotor_SetEnable(0U);
 #endif
   HCSR04_InitPins();
   if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
@@ -762,7 +260,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    uint8_t ir_mask = IR_ReadMask();
+    uint8_t ir_mask = AppLine_ReadMask();
     uint32_t now = HAL_GetTick();
 
 #if ENABLE_MOTION_FEATURES
@@ -771,34 +269,26 @@ int main(void)
 
 #if ENABLE_NON_MOTION_FEATURES
 #if ENABLE_RFID_FEATURES
-    if (((now - last_rfid_poll_tick) >= RFID_POLL_INTERVAL_MS) &&
-        (hcsr04_busy == 0U) &&
-    (vehicle_state == VEHICLE_WAIT_CARD) &&
-    (target_card == CARD_ID_NONE))
     {
-      uint8_t uid[4];
+      AppRfidEvent_t rfid_event;
+      uint8_t allow_rfid_poll = (uint8_t)((AppUltrasonic_IsBusy() == 0U) &&
+                                          (vehicle_state == VEHICLE_WAIT_CARD) &&
+                                          (target_card == CARD_ID_NONE));
 
-      last_rfid_poll_tick = now;
-      if (RC522_ReadUid(uid) != 0U)
+      if (AppRfid_Poll(now, allow_rfid_poll, &rfid_event) != 0U)
       {
-        if ((has_last_uid == 0U) || (UidEquals(last_uid, uid) == 0U))
+        if (rfid_event.is_new_uid != 0U)
         {
           uint8_t card_id;
 
-          UidCopy(last_uid, uid);
-          has_last_uid = 1U;
-          RFID_SendUid(uid);
-          card_id = ResolveCardId(uid);
+          AppOled_ShowUid(rfid_event.uid, ENABLE_RFID_UART_REPORT);
+          card_id = rfid_event.card_id;
 
           if ((vehicle_state == VEHICLE_WAIT_CARD) && ((card_id == CARD_ID_A) || (card_id == CARD_ID_B)))
           {
             StartMission(card_id);
           }
         }
-      }
-      else
-      {
-        has_last_uid = 0U;
       }
     }
 #endif
@@ -824,43 +314,40 @@ int main(void)
     if ((ultrasonic_enabled != 0U) && ((now - last_ultrasonic_poll_tick) >= ultrasonic_interval_ms))
     {
       last_ultrasonic_poll_tick = now;
-      HCSR04_StartMeasure();
+      AppUltrasonic_StartMeasure();
     }
 
-    if ((hcsr04_busy != 0U) && ((now - hcsr04_trigger_tick) >= HCSR04_TIMEOUT_MS))
-    {
-      hcsr04_busy = 0U;
-      hcsr04_timeout_flag = 1U;
-    }
+    AppUltrasonic_Task(now);
 
-    if (hcsr04_result_ready != 0U)
     {
       uint16_t distance_cm;
-      uint16_t pulse_width_us;
+      uint8_t has_distance = 0U;
 
-      hcsr04_result_ready = 0U;
-      pulse_width_us = hcsr04_pulse_width_us;
-
-      if ((pulse_width_us >= HCSR04_MIN_VALID_US) && (pulse_width_us <= HCSR04_MAX_VALID_US))
+      if (AppUltrasonic_FetchResult(&distance_cm, &has_distance) != 0U)
       {
-        distance_cm = (uint16_t)(pulse_width_us / HCSR04_CM_PER_US_DIVISOR);
-
-#if ENABLE_MOTION_FEATURES
-        if ((has_last_distance != 0U) &&
-            ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
-             (vehicle_state == VEHICLE_AVOID_RIGHT) ||
-             (vehicle_state == VEHICLE_AVOID_LEFT)))
+        if (has_distance != 0U)
         {
-          uint16_t diff_cm = (distance_cm > last_distance_cm) ?
-            (uint16_t)(distance_cm - last_distance_cm) :
-            (uint16_t)(last_distance_cm - distance_cm);
-
-          if (diff_cm > HCSR04_MAX_JUMP_CM)
+#if ENABLE_MOTION_FEATURES
+          if ((has_last_distance != 0U) &&
+              ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
+               (vehicle_state == VEHICLE_AVOID_RIGHT) ||
+               (vehicle_state == VEHICLE_AVOID_LEFT)))
           {
-            if (ultrasonic_jump_reject_count < 2U)
+            uint16_t diff_cm = (distance_cm > last_distance_cm) ?
+              (uint16_t)(distance_cm - last_distance_cm) :
+              (uint16_t)(last_distance_cm - distance_cm);
+
+            if (diff_cm > HCSR04_MAX_JUMP_CM)
             {
-              ultrasonic_jump_reject_count++;
-              distance_cm = last_distance_cm;
+              if (ultrasonic_jump_reject_count < 2U)
+              {
+                ultrasonic_jump_reject_count++;
+                distance_cm = last_distance_cm;
+              }
+              else
+              {
+                ultrasonic_jump_reject_count = 0U;
+              }
             }
             else
             {
@@ -871,33 +358,21 @@ int main(void)
           {
             ultrasonic_jump_reject_count = 0U;
           }
+#endif
+
+          last_distance_cm = distance_cm;
+          has_last_distance = 1U;
         }
         else
         {
-          ultrasonic_jump_reject_count = 0U;
+          has_last_distance = 0U;
         }
-#endif
-
-        last_distance_cm = distance_cm;
-        has_last_distance = 1U;
-        Ultrasonic_SendDistance(distance_cm);
       }
-      else
-      {
-        has_last_distance = 0U;
-        Ultrasonic_SendNoEcho();
-      }
-    }
-    else if (hcsr04_timeout_flag != 0U)
-    {
-      hcsr04_timeout_flag = 0U;
-      has_last_distance = 0U;
-      Ultrasonic_SendNoEcho();
     }
 
 #if !ENABLE_MOTION_FEATURES
   #if ENABLE_NON_MOTION_FEATURES
-    OLED_ShowDistance();
+    AppOled_ShowDistance(has_last_distance, last_distance_cm);
   #endif
     continue;
 #endif
@@ -905,14 +380,14 @@ int main(void)
     switch (vehicle_state)
     {
       case VEHICLE_WAIT_CARD:
-        Motor_SetEnable(0U);
+        AppMotor_SetEnable(0U);
         Servo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
-        OLED_ShowSwipePrompt();
+        AppOled_ShowSwipePrompt();
         break;
 
       case VEHICLE_CARD_STANDBY:
-        Motor_SetEnable(0U);
-        Motor_SetDuty(0U, 0U);
+        AppMotor_SetEnable(0U);
+        AppMotor_SetDuty(0U, 0U);
         Servo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
         if ((now - state_start_tick) >= CARD_STANDBY_DELAY_MS)
         {
@@ -922,7 +397,7 @@ int main(void)
 
       case VEHICLE_LINE_FOLLOW:
       {
-        uint8_t norm_mask = IR_NormalizeMask(ir_mask);
+        uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
 
         if ((has_last_distance != 0U) && (last_distance_cm <= OBSTACLE_THRESHOLD_CM))
         {
@@ -940,7 +415,7 @@ int main(void)
 
           last_line_pid_tick = now;
 
-          if (IR_ComputeErrorX10(ir_mask, &error_x10) == 0U)
+          if (AppLine_ComputeErrorX10(ir_mask, &error_x10) == 0U)
           {
             error_x10 = 0;
           }
@@ -967,8 +442,8 @@ int main(void)
             duty_right_pm = LINE_MAX_DUTY_PM;
           }
 
-          Motor_SetEnable(1U);
-          Motor_SetDuty((uint16_t)duty_left_pm, (uint16_t)duty_right_pm);
+          AppMotor_SetEnable(1U);
+          AppMotor_SetDuty((uint16_t)duty_left_pm, (uint16_t)duty_right_pm);
 
           if (line_cross_latched == 0U)
           {
@@ -991,8 +466,8 @@ int main(void)
                 {
                   vehicle_state = VEHICLE_STOPPING;
                   stop_start_tick = now;
-                  Motor_SetEnable(0U);
-                  Motor_SetDuty(0U, 0U);
+                  AppMotor_SetEnable(0U);
+                  AppMotor_SetDuty(0U, 0U);
                 }
               }
             }
@@ -1009,7 +484,7 @@ int main(void)
             line_black_seen_mask = 0U;
           }
         }
-        OLED_ShowDistance();
+        AppOled_ShowDistance(has_last_distance, last_distance_cm);
         break;
       }
 
@@ -1018,8 +493,8 @@ int main(void)
         uint32_t elapsed = now - stop_start_tick;
         uint16_t angle;
 
-        Motor_SetEnable(0U);
-        Motor_SetDuty(0U, 0U);
+        AppMotor_SetEnable(0U);
+        AppMotor_SetDuty(0U, 0U);
 
         if (elapsed >= STOP_DURATION_MS)
         {
@@ -1044,9 +519,9 @@ int main(void)
       }
 
       case VEHICLE_AVOID_RIGHT:
-        Motor_SetEnable(1U);
-        Motor_SetDuty(AVOID_DUTY_FAST_PM, AVOID_DUTY_SLOW_PM);
-        OLED_ShowDistance();
+        AppMotor_SetEnable(1U);
+        AppMotor_SetDuty(AVOID_DUTY_FAST_PM, AVOID_DUTY_SLOW_PM);
+        AppOled_ShowDistance(has_last_distance, last_distance_cm);
         if ((now - state_start_tick) >= AVOID_RIGHT_MS)
         {
           vehicle_state = VEHICLE_AVOID_LEFT;
@@ -1055,9 +530,9 @@ int main(void)
         break;
 
       case VEHICLE_AVOID_LEFT:
-        Motor_SetEnable(1U);
-        Motor_SetDuty(AVOID_DUTY_SLOW_PM, AVOID_DUTY_FAST_PM);
-        OLED_ShowDistance();
+        AppMotor_SetEnable(1U);
+        AppMotor_SetDuty(AVOID_DUTY_SLOW_PM, AVOID_DUTY_FAST_PM);
+        AppOled_ShowDistance(has_last_distance, last_distance_cm);
         if ((now - state_start_tick) >= AVOID_LEFT_MS)
         {
           vehicle_state = VEHICLE_LINE_FOLLOW;
@@ -1119,32 +594,7 @@ void SystemClock_Config(void)
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  if (GPIO_Pin != HCSR04_ECHO_Pin)
-  {
-    return;
-  }
-
-  if (hcsr04_busy == 0U)
-  {
-    return;
-  }
-
-  if (hcsr04_wait_falling == 0U)
-  {
-    if (HAL_GPIO_ReadPin(HCSR04_ECHO_GPIO_Port, HCSR04_ECHO_Pin) == GPIO_PIN_SET)
-    {
-      hcsr04_pulse_start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
-      hcsr04_wait_falling = 1U;
-    }
-    return;
-  }
-
-  if (HAL_GPIO_ReadPin(HCSR04_ECHO_GPIO_Port, HCSR04_ECHO_Pin) == GPIO_PIN_RESET)
-  {
-    hcsr04_pulse_width_us = (uint16_t)((uint16_t)__HAL_TIM_GET_COUNTER(&htim2) - hcsr04_pulse_start);
-    hcsr04_busy = 0U;
-    hcsr04_result_ready = 1U;
-  }
+  AppUltrasonic_HandleEchoExti(GPIO_Pin);
 }
 
 /* USER CODE END 4 */
