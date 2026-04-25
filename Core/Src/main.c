@@ -46,7 +46,7 @@
 
 #define ENABLE_RFID_UART_REPORT 0U
 #define ENABLE_ULTRASONIC_UART_REPORT 1U
-#define CARD_STANDBY_DELAY_MS 5000U
+#define CARD_STANDBY_DELAY_MS 2000U
 #define HCSR04_MEASURE_INTERVAL_MS 100U
 #define HCSR04_MOVE_INTERVAL_MS 140U
 #define HCSR04_MAX_JUMP_CM 25U
@@ -65,17 +65,29 @@
 #define LINE_PID_INTERVAL_MS 10U   /* control period */
 /* Integer proportional gain: correction_pm = error_x10 * LINE_KP_PM_PER_ERR10 */
 #define LINE_KP_PM_PER_ERR10 8
-#define SERVO_DEFAULT_ANGLE_DEG 90U
+#define SERVO_RUN_ANGLE_DEG 55U
+#define SERVO_DEFAULT_ANGLE_DEG SERVO_RUN_ANGLE_DEG
 #define SERVO_ENABLE 1U
-#define STOP_DURATION_MS 5000U
-#define SERVO_STOP_START_ANGLE_DEG 90U
+#define SERVO_ROTATE_DURATION_MS 2000U
+#define SERVO_HOLD_DURATION_MS 2000U
+#define SERVO_STOP_START_ANGLE_DEG SERVO_RUN_ANGLE_DEG
 #define SERVO_STOP_END_ANGLE_DEG 90U
 #define LINE_BLACK_CONFIRM_FRAMES 3U
-#define OBSTACLE_THRESHOLD_CM 15U
-#define AVOID_RIGHT_MS 450U
-#define AVOID_LEFT_MS 450U
+#define OBSTACLE_THRESHOLD_CM 20U
+#define AVOID_RIGHT_MS 620U
+#define AVOID_LEFT_MS 650U
+#define AVOID_FORWARD_MS 280U
+#define AVOID_RIGHT_ALIGN_MS 260U
+#define AVOID_RIGHT_RETURN_MS 360U
 #define AVOID_DUTY_FAST_PM 220U
 #define AVOID_DUTY_SLOW_PM 80U
+#define AVOID_RIGHT_DUTY_FAST_PM 260U
+#define AVOID_RIGHT_DUTY_SLOW_PM 50U
+#define AVOID_LEFT_DUTY_FAST_PM 260U
+#define AVOID_LEFT_DUTY_SLOW_PM 50U
+#define AVOID_FORWARD_DUTY_PM 170U
+#define AVOID_RIGHT_ALIGN_DUTY_FAST_PM 220U
+#define AVOID_RIGHT_ALIGN_DUTY_SLOW_PM 120U
 
 #define CARD_ID_NONE 0U
 #define CARD_ID_A 1U
@@ -104,7 +116,9 @@ typedef enum
   VEHICLE_LINE_FOLLOW,
   VEHICLE_STOPPING,
   VEHICLE_AVOID_RIGHT,
-  VEHICLE_AVOID_LEFT
+  VEHICLE_AVOID_LEFT,
+  VEHICLE_AVOID_FORWARD,
+  VEHICLE_AVOID_RIGHT_ALIGN
 } VehicleState_t;
 
 static VehicleState_t vehicle_state = VEHICLE_WAIT_CARD;
@@ -116,6 +130,7 @@ static uint8_t line_black_seen_mask = 0U;
 static uint8_t line_cross_latched = 0U;
 static uint32_t state_start_tick = 0U;
 static uint32_t stop_start_tick = 0U;
+static uint8_t stop_at_next_line = 0U;
 
 /* USER CODE END PV */
 
@@ -149,6 +164,7 @@ static void StartMission(uint8_t card_id)
   line_black_seen_mask = 0U;
   line_cross_latched = 0U;
   last_line_pid_tick = 0U;
+  stop_at_next_line = 0U;
   vehicle_state = VEHICLE_CARD_STANDBY;
   state_start_tick = HAL_GetTick();
   AppMotor_SetForwardDirection();
@@ -268,7 +284,9 @@ int main(void)
 
     if ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
       (vehicle_state == VEHICLE_AVOID_RIGHT) ||
-      (vehicle_state == VEHICLE_AVOID_LEFT))
+      (vehicle_state == VEHICLE_AVOID_LEFT) ||
+      (vehicle_state == VEHICLE_AVOID_FORWARD) ||
+      (vehicle_state == VEHICLE_AVOID_RIGHT_ALIGN))
     {
       ultrasonic_interval_ms = HCSR04_MOVE_INTERVAL_MS;
     }
@@ -294,7 +312,9 @@ int main(void)
           if ((has_last_distance != 0U) &&
               ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
                (vehicle_state == VEHICLE_AVOID_RIGHT) ||
-               (vehicle_state == VEHICLE_AVOID_LEFT)))
+               (vehicle_state == VEHICLE_AVOID_LEFT) ||
+               (vehicle_state == VEHICLE_AVOID_FORWARD) ||
+               (vehicle_state == VEHICLE_AVOID_RIGHT_ALIGN)))
           {
             uint16_t diff_cm = (distance_cm > last_distance_cm) ?
               (uint16_t)(distance_cm - last_distance_cm) :
@@ -344,14 +364,14 @@ int main(void)
     {
       case VEHICLE_WAIT_CARD:
         AppMotor_SetEnable(0U);
-        AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
+        AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
         AppOled_ShowSwipePrompt();
         break;
 
       case VEHICLE_CARD_STANDBY:
         AppMotor_SetEnable(0U);
         AppMotor_SetDuty(0U, 0U);
-        AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
+        AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
         if ((now - state_start_tick) >= CARD_STANDBY_DELAY_MS)
         {
           vehicle_state = VEHICLE_LINE_FOLLOW;
@@ -362,9 +382,11 @@ int main(void)
       {
         uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
 
+        AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
+
         if ((has_last_distance != 0U) && (last_distance_cm <= OBSTACLE_THRESHOLD_CM))
         {
-          vehicle_state = VEHICLE_AVOID_RIGHT;
+          vehicle_state = VEHICLE_AVOID_LEFT;
           state_start_tick = now;
           break;
         }
@@ -431,6 +453,11 @@ int main(void)
                   stop_start_tick = now;
                   AppMotor_SetEnable(0U);
                   AppMotor_SetDuty(0U, 0U);
+
+                  if (stop_at_next_line != 0U)
+                  {
+                    target_stop_line = 0U;
+                  }
                 }
               }
             }
@@ -459,10 +486,9 @@ int main(void)
         AppMotor_SetEnable(0U);
         AppMotor_SetDuty(0U, 0U);
 
-        if (elapsed >= STOP_DURATION_MS)
+        if (stop_at_next_line != 0U)
         {
-          angle = SERVO_STOP_END_ANGLE_DEG;
-          AppServo_SetAngle(angle);
+          AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
           vehicle_state = VEHICLE_WAIT_CARD;
           target_card = CARD_ID_NONE;
           target_stop_line = 0U;
@@ -470,12 +496,28 @@ int main(void)
           line_black_frame_count = 0U;
           line_black_seen_mask = 0U;
           line_cross_latched = 0U;
+          stop_at_next_line = 0U;
+        }
+        else if (elapsed >= (SERVO_ROTATE_DURATION_MS + SERVO_HOLD_DURATION_MS))
+        {
+          AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
+          stop_at_next_line = 1U;
+          target_stop_line = (uint8_t)(crossed_line_count + 1U);
+          line_black_frame_count = 0U;
+          line_black_seen_mask = 0U;
+          line_cross_latched = 0U;
+          last_line_pid_tick = now;
+          vehicle_state = VEHICLE_LINE_FOLLOW;
+        }
+        else if (elapsed >= SERVO_ROTATE_DURATION_MS)
+        {
+          AppServo_SetAngle(SERVO_STOP_END_ANGLE_DEG);
         }
         else
         {
           int32_t angle_delta = (int32_t)SERVO_STOP_END_ANGLE_DEG - (int32_t)SERVO_STOP_START_ANGLE_DEG;
           angle = (int16_t)((int32_t)SERVO_STOP_START_ANGLE_DEG +
-            ((angle_delta * (int32_t)elapsed) / (int32_t)STOP_DURATION_MS));
+            ((angle_delta * (int32_t)elapsed) / (int32_t)SERVO_ROTATE_DURATION_MS));
           AppServo_SetAngle((uint16_t)angle);
         }
 
@@ -484,22 +526,44 @@ int main(void)
 
       case VEHICLE_AVOID_RIGHT:
         AppMotor_SetEnable(1U);
-        AppMotor_SetDuty(AVOID_DUTY_FAST_PM, AVOID_DUTY_SLOW_PM);
+        AppMotor_SetDuty(AVOID_RIGHT_DUTY_FAST_PM, AVOID_RIGHT_DUTY_SLOW_PM);
         AppOled_ShowDistance(has_last_distance, last_distance_cm);
-        if ((now - state_start_tick) >= AVOID_RIGHT_MS)
+        if ((now - state_start_tick) >= AVOID_RIGHT_RETURN_MS)
         {
-          vehicle_state = VEHICLE_AVOID_LEFT;
-          state_start_tick = now;
+          vehicle_state = VEHICLE_LINE_FOLLOW;
         }
         break;
 
       case VEHICLE_AVOID_LEFT:
         AppMotor_SetEnable(1U);
-        AppMotor_SetDuty(AVOID_DUTY_SLOW_PM, AVOID_DUTY_FAST_PM);
+        AppMotor_SetDuty(AVOID_LEFT_DUTY_SLOW_PM, AVOID_LEFT_DUTY_FAST_PM);
         AppOled_ShowDistance(has_last_distance, last_distance_cm);
         if ((now - state_start_tick) >= AVOID_LEFT_MS)
         {
-          vehicle_state = VEHICLE_LINE_FOLLOW;
+          vehicle_state = VEHICLE_AVOID_FORWARD;
+          state_start_tick = now;
+        }
+        break;
+
+      case VEHICLE_AVOID_FORWARD:
+        AppMotor_SetEnable(1U);
+        AppMotor_SetDuty(AVOID_FORWARD_DUTY_PM, AVOID_FORWARD_DUTY_PM);
+        AppOled_ShowDistance(has_last_distance, last_distance_cm);
+        if ((now - state_start_tick) >= AVOID_FORWARD_MS)
+        {
+          vehicle_state = VEHICLE_AVOID_RIGHT_ALIGN;
+          state_start_tick = now;
+        }
+        break;
+
+      case VEHICLE_AVOID_RIGHT_ALIGN:
+        AppMotor_SetEnable(1U);
+        AppMotor_SetDuty(AVOID_RIGHT_ALIGN_DUTY_FAST_PM, AVOID_RIGHT_ALIGN_DUTY_SLOW_PM);
+        AppOled_ShowDistance(has_last_distance, last_distance_cm);
+        if ((now - state_start_tick) >= AVOID_RIGHT_ALIGN_MS)
+        {
+          vehicle_state = VEHICLE_AVOID_RIGHT;
+          state_start_tick = now;
         }
         break;
 
