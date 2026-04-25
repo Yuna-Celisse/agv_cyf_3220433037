@@ -29,6 +29,7 @@
 #include "oled.h"
 #include "app_line.h"
 #include "app_motor.h"
+#include "app_servo.h"
 #include "app_oled_ui.h"
 #include "app_ultrasonic.h"
 #include "app_rfid.h"
@@ -64,13 +65,10 @@
 #define LINE_PID_INTERVAL_MS 10U   /* control period */
 /* Integer proportional gain: correction_pm = error_x10 * LINE_KP_PM_PER_ERR10 */
 #define LINE_KP_PM_PER_ERR10 8
-#define SERVO_FRAME_MS 20U
-#define SERVO_MIN_PULSE_US 500U
-#define SERVO_MAX_PULSE_US 2500U
-#define SERVO_DEFAULT_ANGLE_DEG 30U
+#define SERVO_DEFAULT_ANGLE_DEG 90U
 #define SERVO_ENABLE 1U
 #define STOP_DURATION_MS 5000U
-#define SERVO_STOP_START_ANGLE_DEG 30U
+#define SERVO_STOP_START_ANGLE_DEG 90U
 #define SERVO_STOP_END_ANGLE_DEG 90U
 #define LINE_BLACK_CONFIRM_FRAMES 3U
 #define OBSTACLE_THRESHOLD_CM 15U
@@ -98,7 +96,6 @@ static uint16_t last_distance_cm = 0U;
 static uint8_t has_last_distance = 0U;
 static uint8_t ultrasonic_jump_reject_count = 0U;
 static uint32_t last_line_pid_tick = 0U;
-static uint16_t servo_pulse_us = 1500U;
 
 typedef enum
 {
@@ -126,9 +123,6 @@ static uint32_t stop_start_tick = 0U;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void HCSR04_InitPins(void);
-static void Servo_Init(void);
-static void Servo_SetAngle(uint16_t angle_deg);
-static void Servo_Task(void);
 static void StartMission(uint8_t card_id);
 
 /* USER CODE END PFP */
@@ -139,38 +133,6 @@ static void StartMission(uint8_t card_id);
 static void HCSR04_InitPins(void)
 {
   AppUltrasonic_Init(ENABLE_ULTRASONIC_UART_REPORT);
-}
-
-static void Servo_Init(void)
-{
-#if (SERVO_ENABLE == 0U)
-  return;
-#endif
-
-  if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  Servo_SetAngle(SERVO_DEFAULT_ANGLE_DEG);
-}
-
-static void Servo_SetAngle(uint16_t angle_deg)
-{
-  uint16_t clamped_angle = angle_deg;
-  uint32_t pulse_span = (uint32_t)(SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US);
-
-  if (clamped_angle > 180U)
-  {
-    clamped_angle = 180U;
-  }
-
-  servo_pulse_us = (uint16_t)(SERVO_MIN_PULSE_US + ((pulse_span * clamped_angle) / 180U));
-  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, servo_pulse_us);
-}
-
-static void Servo_Task(void)
-{
-  (void)servo_pulse_us;
 }
 
 static void StartMission(uint8_t card_id)
@@ -192,7 +154,7 @@ static void StartMission(uint8_t card_id)
   AppMotor_SetForwardDirection();
   AppMotor_SetEnable(0U);
   AppMotor_SetDuty(0U, 0U);
-  Servo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
+  AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
   AppOled_ShowTarget(card_id);
 }
 
@@ -253,7 +215,7 @@ int main(void)
   }
   __HAL_TIM_SET_COUNTER(&htim2, 0U);
 #if ENABLE_MOTION_FEATURES
-  Servo_Init();
+  AppServo_Init(SERVO_DEFAULT_ANGLE_DEG);
 #endif
   /* USER CODE END 2 */
 
@@ -265,7 +227,7 @@ int main(void)
     uint32_t now = HAL_GetTick();
 
 #if ENABLE_MOTION_FEATURES
-    Servo_Task();
+  AppServo_Task();
 #endif
 
 #if ENABLE_NON_MOTION_FEATURES
@@ -382,14 +344,14 @@ int main(void)
     {
       case VEHICLE_WAIT_CARD:
         AppMotor_SetEnable(0U);
-        Servo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
+        AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
         AppOled_ShowSwipePrompt();
         break;
 
       case VEHICLE_CARD_STANDBY:
         AppMotor_SetEnable(0U);
         AppMotor_SetDuty(0U, 0U);
-        Servo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
+        AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
         if ((now - state_start_tick) >= CARD_STANDBY_DELAY_MS)
         {
           vehicle_state = VEHICLE_LINE_FOLLOW;
@@ -500,7 +462,7 @@ int main(void)
         if (elapsed >= STOP_DURATION_MS)
         {
           angle = SERVO_STOP_END_ANGLE_DEG;
-          Servo_SetAngle(angle);
+          AppServo_SetAngle(angle);
           vehicle_state = VEHICLE_WAIT_CARD;
           target_card = CARD_ID_NONE;
           target_stop_line = 0U;
@@ -511,9 +473,10 @@ int main(void)
         }
         else
         {
-          angle = (uint16_t)(SERVO_STOP_START_ANGLE_DEG +
-            (((uint32_t)(SERVO_STOP_END_ANGLE_DEG - SERVO_STOP_START_ANGLE_DEG) * elapsed) / STOP_DURATION_MS));
-          Servo_SetAngle(angle);
+          int32_t angle_delta = (int32_t)SERVO_STOP_END_ANGLE_DEG - (int32_t)SERVO_STOP_START_ANGLE_DEG;
+          angle = (int16_t)((int32_t)SERVO_STOP_START_ANGLE_DEG +
+            ((angle_delta * (int32_t)elapsed) / (int32_t)STOP_DURATION_MS));
+          AppServo_SetAngle((uint16_t)angle);
         }
 
         break;
