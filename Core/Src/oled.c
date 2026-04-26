@@ -56,35 +56,35 @@ static void OLED_SetPageAddress(u8 page)
 	OLED_WR_Byte((u8)(((col >> 4U) & 0x0FU) | 0x10U), OLED_CMD);
 }
 
-//���Ժ���
+// Display mode: normal or inverse
 void OLED_ColorTurn(u8 i)
 {
 	if(i==0)
 		{
-			OLED_WR_Byte(0xA6,OLED_CMD);//������ʾ
+			OLED_WR_Byte(0xA6,OLED_CMD);// normal display
 		}
 	if(i==1)
 		{
-			OLED_WR_Byte(0xA7,OLED_CMD);//��ɫ��ʾ
+			OLED_WR_Byte(0xA7,OLED_CMD);// inverse display
 		}
 }
 
-//��Ļ��ת180��
+// Rotate display direction
 void OLED_DisplayTurn(u8 i)
 {
 	if(i==0)
 		{
-			OLED_WR_Byte(0xC8,OLED_CMD);//������ʾ
+			OLED_WR_Byte(0xC8,OLED_CMD);// normal scan direction
 			OLED_WR_Byte(0xA1,OLED_CMD);
 		}
 	if(i==1)
 		{
-			OLED_WR_Byte(0xC0,OLED_CMD);//��ת��ʾ
+			OLED_WR_Byte(0xC0,OLED_CMD);// rotated scan direction
 			OLED_WR_Byte(0xA0,OLED_CMD);
 		}
 }
 
-//��ʼ�ź�
+// I2C start condition
 void I2C_Start(void)
 {
 	OLED_SDIN_Set();
@@ -96,7 +96,7 @@ void I2C_Start(void)
 	OLED_I2C_Delay();
 }
 
-//�����ź�
+// I2C stop condition
 void I2C_Stop(void)
 {
 	OLED_I2C_Delay();
@@ -108,8 +108,8 @@ void I2C_Stop(void)
 	OLED_I2C_Delay();
 }
 
-//�ȴ��ź���Ӧ
-void I2C_WaitAck(void) //�������źŵĵ�ƽ
+// Wait for ACK clock pulse
+void I2C_WaitAck(void) // software I2C ACK timing only
 {
 	OLED_SCLK_Set();
 	OLED_I2C_Delay();
@@ -117,15 +117,15 @@ void I2C_WaitAck(void) //�������źŵĵ�ƽ
 	OLED_I2C_Delay();
 }
 
-//д��һ���ֽ�
+// Send one byte over software I2C
 void Send_Byte(u8 dat)
 {
 	u8 i;
 	for(i=0;i<8;i++)
 	{
-		OLED_SCLK_Clr();//��ʱ���ź�����Ϊ�͵�ƽ
+		OLED_SCLK_Clr();// drive clock low
 		OLED_I2C_Delay();
-		if(dat&0x80)//��dat��8λ�����λ����д��
+		if(dat&0x80)// send MSB first
 		{
 			OLED_SDIN_Set();
     }
@@ -134,17 +134,16 @@ void Send_Byte(u8 dat)
 			OLED_SDIN_Clr();
     }
 		OLED_I2C_Delay();
-		OLED_SCLK_Set();//��ʱ���ź�����Ϊ�ߵ�ƽ
+		OLED_SCLK_Set();// clock high to latch bit
 		OLED_I2C_Delay();
-		OLED_SCLK_Clr();//��ʱ���ź�����Ϊ�͵�ƽ
+		OLED_SCLK_Clr();// clock low for next bit
 		OLED_I2C_Delay();
 		dat<<=1;
   }
 }
 
-//����һ���ֽ�
-//��SSD1306д��һ���ֽڡ�
-//mode:����/�����־ 0,��ʾ����;1,��ʾ����;
+// Write one byte to SSD1306
+// mode: 0 command, 1 data
 void OLED_WR_Byte(u8 dat,u8 mode)
 {
 	I2C_Start();
@@ -170,24 +169,23 @@ void OLED_WR_Byte(u8 dat,u8 mode)
 #endif
 }
 
-
-//����OLED��ʾ 
+// Turn OLED panel on
 void OLED_DisPlay_On(void)
 {
-	OLED_WR_Byte(0x8D,OLED_CMD);//��ɱ�ʹ��
-	OLED_WR_Byte(0x14,OLED_CMD);//������ɱ�
-	OLED_WR_Byte(0xAF,OLED_CMD);//������Ļ
+	OLED_WR_Byte(0x8D,OLED_CMD);// charge pump command
+	OLED_WR_Byte(0x14,OLED_CMD);// enable charge pump
+	OLED_WR_Byte(0xAF,OLED_CMD);// display on
 }
 
-//�ر�OLED��ʾ 
+// Turn OLED panel off
 void OLED_DisPlay_Off(void)
 {
-	OLED_WR_Byte(0x8D,OLED_CMD);//��ɱ�ʹ��
-	OLED_WR_Byte(0x10,OLED_CMD);//�رյ�ɱ�
-	OLED_WR_Byte(0xAF,OLED_CMD);//�ر���Ļ
+	OLED_WR_Byte(0x8D,OLED_CMD);// charge pump command
+	OLED_WR_Byte(0x10,OLED_CMD);// disable charge pump
+	OLED_WR_Byte(0xAF,OLED_CMD);// keep panel command sequence
 }
 
-//�����Դ浽OLED	
+// Flush full GRAM buffer to OLED
 void OLED_Refresh(void)
 {
 	u8 i;
@@ -223,7 +221,7 @@ void OLED_ClearPage(u8 page)
 		OLED_GRAM[x][page] = 0U;
 	}
 }
-//��������
+// Clear full GRAM and refresh display
 void OLED_Clear(void)
 {
 	u8 i,n;
@@ -231,13 +229,13 @@ void OLED_Clear(void)
 	{
 	   for(n=0;n<128;n++)
 			{
-			 OLED_GRAM[n][i]=0;//�����������
+			 OLED_GRAM[n][i]=0;// clear display buffer byte
 			}
   }
-	OLED_Refresh();//������ʾ
+	OLED_Refresh();// update OLED with cleared buffer
 }
 
-//���� 
+// Set one pixel
 //x:0~127
 //y:0~63
 void OLED_DrawPoint(u8 x,u8 y)
@@ -249,7 +247,7 @@ void OLED_DrawPoint(u8 x,u8 y)
 	OLED_GRAM[x][i]|=n;
 }
 
-//���һ����
+// Clear one pixel
 //x:0~127
 //y:0~63
 void OLED_ClearPoint(u8 x,u8 y)
@@ -263,29 +261,28 @@ void OLED_ClearPoint(u8 x,u8 y)
 	OLED_GRAM[x][i]=~OLED_GRAM[x][i];
 }
 
-
-//����
+// Draw line
 //x:0~128
 //y:0~64
 void OLED_DrawLine(u8 x1,u8 y1,u8 x2,u8 y2)
 {
 	u8 i,k,k1,k2,y0;
 	if((x1<0)||(x2>128)||(y1<0)||(y2>64)||(x1>x2)||(y1>y2))return;
-	if(x1==x2)    //������
+	if(x1==x2)    // vertical line
 	{
 			for(i=0;i<(y2-y1);i++)
 			{
 				OLED_DrawPoint(x1,y1+i);
 			}
   }
-	else if(y1==y2)   //������
+	else if(y1==y2)   // horizontal line
 	{
 			for(i=0;i<(x2-x1);i++)
 			{
 				OLED_DrawPoint(x1+i,y1);
 			}
   }
-	else      //��б��
+	else      // slanted line (simple interpolation)
 	{
 		k1=y2-y1;
 		k2=x2-x1;
@@ -296,8 +293,8 @@ void OLED_DrawLine(u8 x1,u8 y1,u8 x2,u8 y2)
 			}
 	}
 }
-//x,y:Բ������
-//r:Բ�İ뾶
+//x,y: circle center
+//r: circle radius
 void OLED_DrawCircle(u8 x,u8 y,u8 r)
 {
 	int a, b,num;
@@ -316,7 +313,7 @@ void OLED_DrawCircle(u8 x,u8 y,u8 r)
         OLED_DrawPoint(x - b, y + a);
         
         a++;
-        num = (a * a + b * b) - r*r;//���㻭�ĵ���Բ�ĵľ���
+		num = (a * a + b * b) - r*r;// midpoint circle decision value
         if(num > 0)
         {
             b--;
@@ -325,28 +322,26 @@ void OLED_DrawCircle(u8 x,u8 y,u8 r)
     }
 }
 
-
-
-//��ָ��λ����ʾһ���ַ�,���������ַ�
+// Show one ASCII character at given position
 //x:0~127
 //y:0~63
-//size:ѡ������ 12/16/24
+//size: font size 12/16/24
 void OLED_ShowChar(u8 x,u8 y,u8 chr,u8 size1)
 {
 	u8 i,m,temp,size2,chr1;
 	u8 y0=y;
-	size2=(size1/8+((size1%8)?1:0))*(size1/2);  //�õ�����һ���ַ���Ӧ������ռ���ֽ���
-	chr1=chr-' ';  //����ƫ�ƺ��ֵ
+	size2=(size1/8+((size1%8)?1:0))*(size1/2);  // bytes used by one character bitmap
+	chr1=chr-' ';  // font table offset
 	for(i=0;i<size2;i++)
 	{
 		if(size1==12)
-        {temp=asc2_1206[chr1][i];} //����1206����
+			{temp=asc2_1206[chr1][i];} // 12x6 font
 		else if(size1==16)
-        {temp=asc2_1608[chr1][i];} //����1608����
+			{temp=asc2_1608[chr1][i];} // 16x8 font
 		else if(size1==24)
-        {temp=asc2_2412[chr1][i];} //����2412����
+			{temp=asc2_2412[chr1][i];} // 24x12 font
 		else return;
-				for(m=0;m<8;m++)           //д������
+				for(m=0;m<8;m++)           // write bits to GRAM
 				{
 					if(temp&0x80)OLED_DrawPoint(x,y);
 					else OLED_ClearPoint(x,y);
@@ -361,19 +356,17 @@ void OLED_ShowChar(u8 x,u8 y,u8 chr,u8 size1)
 				}
   }
 }
-
-
-//��ʾ�ַ���
-//x,y:�������  
-//size1:�����С 
-//*chr:�ַ�����ʼ��ַ 
+// Show ASCII string
+//x,y: start position
+//size1: font size
+//*chr: string pointer
 void OLED_ShowString(u8 x,u8 y,u8 *chr,u8 size1)
 {
-	while((*chr>=' ')&&(*chr<='~'))//�ж��ǲ��ǷǷ��ַ�!
+	while((*chr>=' ')&&(*chr<='~'))// render printable ASCII only
 	{
 		OLED_ShowChar(x,y,*chr,size1);
 		x+=size1/2;
-		if(x>128-size1)  //����
+		if(x>128-size1)  // wrap to next row
 		{
 			x=0;
 			y+=2;
@@ -393,10 +386,10 @@ u32 OLED_Pow(u8 m,u8 n)
 	return result;
 }
 
-////��ʾ2������
-////x,y :�������	 
-////len :���ֵ�λ��
-////size:�����С
+//// Show decimal number
+////x,y : start position
+////len : number of digits
+////size: font size
 void OLED_ShowNum(u8 x,u8 y,u32 num,u8 len,u8 size1)
 {
 	u8 t,temp;
@@ -414,9 +407,9 @@ void OLED_ShowNum(u8 x,u8 y,u32 num,u8 len,u8 size1)
   }
 }
 
-//��ʾ����
-//x,y:�������
-//num:���ֶ�Ӧ�����
+// Show Chinese character from font table
+//x,y: start position
+//num: character index
 void OLED_ShowChinese(u8 x,u8 y,u8 num,u8 size1)
 {
 	u8 i,m,n=0,temp,chr1;
@@ -429,13 +422,13 @@ void OLED_ShowChinese(u8 x,u8 y,u8 num,u8 size1)
 			for(i=0;i<size1;i++)
 			{
 				if(size1==16)
-						{temp=Hzk1[chr1][i];}//����16*16����
+						{temp=Hzk1[chr1][i];}// 16x16 Chinese font
 				else if(size1==24)
-						{temp=Hzk2[chr1][i];}//����24*24����
+						{temp=Hzk2[chr1][i];}// 24x24 Chinese font
 				else if(size1==32)       
-						{temp=Hzk3[chr1][i];}//����32*32����
+						{temp=Hzk3[chr1][i];}// 32x32 Chinese font
 				else if(size1==64)
-						{temp=Hzk4[chr1][i];}//����64*64����
+						{temp=Hzk4[chr1][i];}// 64x64 Chinese font
 				else return;
 							
 						for(m=0;m<8;m++)
@@ -453,8 +446,8 @@ void OLED_ShowChinese(u8 x,u8 y,u8 num,u8 size1)
 	}
 }
 
-//num ��ʾ���ֵĸ���
-//space ÿһ����ʾ�ļ��
+//num: total number of characters
+//space: spacing between characters
 void OLED_ScrollDisplay(u8 num,u8 space)
 {
 	u8 i,n,t=0,m=0,r;
@@ -462,12 +455,12 @@ void OLED_ScrollDisplay(u8 num,u8 space)
 	{
 		if(m==0)
 		{
-	    OLED_ShowChinese(128,24,t,16); //д��һ�����ֱ�����OLED_GRAM[][]������
+	    OLED_ShowChinese(128,24,t,16); // draw one character into GRAM buffer
 			t++;
 		}
 		if(t==num)
 			{
-				for(r=0;r<16*space;r++)      //��ʾ���
+				for(r=0;r<16*space;r++)      // output spacing frames
 				 {
 					for(i=0;i<144;i++)
 						{
@@ -482,7 +475,7 @@ void OLED_ScrollDisplay(u8 num,u8 space)
       }
 		m++;
 		if(m==16){m=0;}
-		for(i=0;i<144;i++)   //ʵ������
+		for(i=0;i<144;i++)   // perform horizontal scroll
 		{
 			for(n=0;n<8;n++)
 			{
@@ -493,19 +486,19 @@ void OLED_ScrollDisplay(u8 num,u8 space)
 	}
 }
 
-//����д�����ݵ���ʼλ��
+// Set write pointer by page and column
 void OLED_WR_BP(u8 x,u8 y)
 {
 	u8 col = (u8)(x + (u8)OLED_COL_OFFSET);
 
-	OLED_WR_Byte(0xb0+y,OLED_CMD);//��������ʼ��ַ
+	OLED_WR_Byte(0xb0+y,OLED_CMD);// page start address
 	OLED_WR_Byte((u8)(((col & 0xf0U)>>4) | 0x10U),OLED_CMD);
 	OLED_WR_Byte((u8)(col & 0x0fU),OLED_CMD);
 }
 
-//x0,y0���������
-//x1,y1���յ�����
-//BMP[]��Ҫд���ͼƬ����
+//x0,y0: top-left
+//x1,y1: bottom-right (exclusive)
+//BMP[]: bitmap data stream
 void OLED_ShowPicture(u8 x0,u8 y0,u8 x1,u8 y1,u8 BMP[])
 {
 	u32 j=0;
@@ -522,7 +515,7 @@ void OLED_ShowPicture(u8 x0,u8 y0,u8 x1,u8 y1,u8 BMP[])
      }
 	 }
 }
-//OLED�ĳ�ʼ��
+// OLED initialization sequence
 void OLED_Init(void)
 {
 	GPIO_InitTypeDef GPIO_InitStructure = {0};
@@ -539,7 +532,7 @@ void OLED_Init(void)
 
 	OLED_RST_Set();
 	HAL_Delay(100);
-	OLED_RST_Clr();//��λ
+	OLED_RST_Clr();// hardware reset pulse
 	HAL_Delay(200);
 	OLED_RST_Set();
 	OLED_DC_Clr();
@@ -550,8 +543,8 @@ void OLED_Init(void)
 	OLED_WR_Byte(0x40,OLED_CMD);//--set start line address  Set Mapping RAM Display Start Line (0x00~0x3F)
 	OLED_WR_Byte(0x81,OLED_CMD);//--set contrast control register
 	OLED_WR_Byte(0xCF,OLED_CMD);// Set SEG Output Current Brightness
-	OLED_WR_Byte(0xA1,OLED_CMD);//--Set SEG/Column Mapping     0xa0���ҷ��� 0xa1����
-	OLED_WR_Byte(0xC8,OLED_CMD);//Set COM/Row Scan Direction   0xc0���·��� 0xc8����
+	OLED_WR_Byte(0xA1,OLED_CMD);//--Set SEG/Column Mapping (A0/A1)
+	OLED_WR_Byte(0xC8,OLED_CMD);//Set COM/Row Scan Direction (C0/C8)
 	OLED_WR_Byte(0xA6,OLED_CMD);//--set normal display
 	OLED_WR_Byte(0xA8,OLED_CMD);//--set multiplex ratio(1 to 64)
 	OLED_WR_Byte(0x3f,OLED_CMD);//--1/64 duty
