@@ -45,7 +45,7 @@ uint8_t AppLine_ComputeErrorX10(uint8_t raw_mask, int16_t *error_x10)
   int8_t i;
   int16_t weighted_sum = 0;                        /* 命中探头的权重和 */
   int16_t hit_count = 0;                           /* 命中探头个数 */
-  static const int8_t weights[5] = {-5, -1, 0, 1, 5}; /* 从左到右的位置权重 */
+  static const int8_t weights[5] = {-4, -1, 0, 1, 4}; /* 从左到右的位置权重 */
 
   if (error_x10 == 0)
   {

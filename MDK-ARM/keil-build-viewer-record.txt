@@ -2,11 +2,11 @@
        444          0          0          0          8          0   app_encoder.o
        390          0          5          0          0          0   app_line.o
       1342          0          0          0         35          0   app_motor.o
-      1276          0         41          0         68          0   app_oled_ui.o
+      1312          0         41          0         68          0   app_oled_ui.o
        460          0          8          0          9          0   app_rfid.o
        146          0          0          2          0          0   app_servo.o
       1094          0          0          0         13          0   app_ultrasonic.o
-      3110          0          0          0         30          0   app_vehicle.o
+      3680          0         60          0         42          0   app_vehicle.o
        336          0          0          0          0          0   gpio.o
        202          0          0          0          0          0   main.o
       2136          0       6080          0       1152          0   oled.o
@@ -31,8 +31,8 @@ Memory Map of the image
 
 	Load Region LR_IROM1 
 
-		Execution Region ER_IROM1 (Exec base: 0x08000000, Size: 0x00007DFC, Max: 0x00010000, END)
+		Execution Region ER_IROM1 (Exec base: 0x08000000, Size: 0x00009C2C, Max: 0x00010000, END)
 
-		Execution Region RW_IRAM1 (Exec base: 0x20000000, Size: 0x00000D10, Max: 0x00005000, END)
+		Execution Region RW_IRAM1 (Exec base: 0x20000000, Size: 0x00000D20, Max: 0x00005000, END)
 
 Image component sizes

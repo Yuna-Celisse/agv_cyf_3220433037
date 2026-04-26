@@ -10,6 +10,9 @@
 #include "main.h"
 #include "oled.h"
 #include "tim.h"
+#include "usart.h"
+
+#include <stdio.h>
 
 #define ENABLE_RFID_UART_REPORT 0U
 #define ENABLE_ULTRASONIC_UART_REPORT 1U
@@ -27,6 +30,8 @@
 #define ENABLE_MOTION_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
 #define ENABLE_RFID_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
 #define ENABLE_MOTOR_CLOSED_LOOP 0U
+#define ENABLE_ENCODER_UART_REPORT 1U
+#define ENCODER_UART_REPORT_INTERVAL_MS 100U
 #define LINE_BASE_DUTY_PM 160U
 #define LINE_MIN_DUTY_PM 50U
 #define LINE_MAX_DUTY_PM 650U
@@ -34,7 +39,6 @@
 #define LINE_KP_PM_PER_ERR10 8
 #define SERVO_RUN_ANGLE_DEG 55U
 #define SERVO_DEFAULT_ANGLE_DEG SERVO_RUN_ANGLE_DEG
-#define SERVO_ROTATE_DURATION_MS 2000U
 #define SERVO_HOLD_DURATION_MS 2000U
 #define SERVO_STOP_START_ANGLE_DEG SERVO_RUN_ANGLE_DEG
 #define SERVO_STOP_END_ANGLE_DEG 90U
@@ -42,18 +46,21 @@
 #define OBSTACLE_THRESHOLD_CM 20U
 #define AVOID_LEFT_MS 850U
 #define AVOID_FORWARD_MS 180U
-#define AVOID_RIGHT_ALIGN_MS 520U
+#define AVOID_RIGHT_ALIGN_MS 760U
 #define AVOID_RETURN_FORWARD_MS 1400U
 #define AVOID_RIGHT_SEARCH_MAX_MS 1600U
-#define AVOID_LINE_CONFIRM_FRAMES 2U
-#define AVOID_RIGHT_DUTY_FAST_PM 260U
-#define AVOID_RIGHT_DUTY_SLOW_PM 50U
+#define AVOID_LINE_CONFIRM_FRAMES 1U
+#define AVOID_LINE_EDGE_MASK 0x11U
+#define LINE_RECOVER_BOOST_MS 220U
+#define LINE_RECOVER_KP_NUM 1
+#define AVOID_RIGHT_DUTY_FAST_PM 220U
+#define AVOID_RIGHT_DUTY_SLOW_PM 70U
 #define AVOID_LEFT_DUTY_FAST_PM 260U
 #define AVOID_LEFT_DUTY_SLOW_PM 50U
 #define AVOID_FORWARD_DUTY_PM 230U
 #define AVOID_RETURN_FORWARD_DUTY_PM 230U
-#define AVOID_RIGHT_ALIGN_DUTY_FAST_PM 260U
-#define AVOID_RIGHT_ALIGN_DUTY_SLOW_PM 80U
+#define AVOID_RIGHT_ALIGN_DUTY_FAST_PM 270U
+#define AVOID_RIGHT_ALIGN_DUTY_SLOW_PM 70U
 
 #define CARD_ID_NONE 0U
 #define CARD_ID_A 1U
@@ -81,15 +88,20 @@ static uint32_t s_last_line_pid_tick = 0U;
 static VehicleState_t s_vehicle_state = VEHICLE_WAIT_CARD;
 static uint8_t s_target_card = CARD_ID_NONE;
 static uint8_t s_target_stop_line = 0U;
+static uint8_t s_final_stop_line = 0U;
 static uint8_t s_crossed_line_count = 0U;
 static uint8_t s_line_black_frame_count = 0U;
 static uint8_t s_line_black_seen_mask = 0U;
 static uint8_t s_line_cross_latched = 0U;
 static uint8_t s_avoid_line_seen_count = 0U;
 static uint8_t s_oled_showing_avoid = 0U;
+static uint8_t s_pickup_done = 0U;
+static uint8_t s_payload_raised = 0U;
+static uint8_t s_stop_is_final = 0U;
+static uint32_t s_line_recover_until_tick = 0U;
 static uint32_t s_state_start_tick = 0U;
 static uint32_t s_stop_start_tick = 0U;
-static uint8_t s_stop_at_next_line = 0U;
+static uint32_t s_last_encoder_report_tick = 0U;
 
 static uint8_t AppVehicle_IsUltrasonicMotionState(VehicleState_t state)
 {
@@ -117,7 +129,7 @@ static void AppVehicle_ResetLineTracking(void)
   s_line_cross_latched = 0U;
   s_avoid_line_seen_count = 0U;
   s_last_line_pid_tick = 0U;
-  s_stop_at_next_line = 0U;
+  s_stop_is_final = 0U;
 }
 
 static void AppVehicle_StopMotion(void)
@@ -126,10 +138,43 @@ static void AppVehicle_StopMotion(void)
   AppMotor_SetDuty(0U, 0U);
 }
 
+static uint8_t AppVehicle_IsLineRecovering(uint32_t now)
+{
+  return (uint8_t)((int32_t)(s_line_recover_until_tick - now) > 0);
+}
+
 static void AppVehicle_ShowAvoidStatus(const uint8_t *text, uint8_t len)
 {
   AppOled_ShowStatus(text, len);
   s_oled_showing_avoid = 1U;
+}
+
+static void AppVehicle_ReportEncoderCounts(uint32_t now)
+{
+#if ENABLE_ENCODER_UART_REPORT
+  AppEncoder_Counts_t counts;
+  char tx_buf[40];
+  int len;
+
+  if ((now - s_last_encoder_report_tick) < ENCODER_UART_REPORT_INTERVAL_MS)
+  {
+    return;
+  }
+
+  s_last_encoder_report_tick = now;
+  counts = AppEncoder_GetCounts();
+  len = snprintf(tx_buf,
+                 sizeof(tx_buf),
+                 "ENC L:%ld R:%ld\r\n",
+                 (long)counts.left_count,
+                 (long)counts.right_count);
+  if (len > 0)
+  {
+    (void)HAL_UART_Transmit(&huart3, (uint8_t *)tx_buf, (uint16_t)len, 20U);
+  }
+#else
+  (void)now;
+#endif
 }
 
 static void AppVehicle_RestoreTargetStatus(void)
@@ -161,11 +206,15 @@ static void AppVehicle_StartMission(uint8_t card_id)
   }
 
   s_target_card = card_id;
-  s_target_stop_line = (card_id == CARD_ID_A) ? 1U : 2U;
+  s_target_stop_line = (uint8_t)((card_id == CARD_ID_A) ? 1U : 2U);
+  s_final_stop_line = 3U;
+  s_pickup_done = 0U;
+  s_payload_raised = 0U;
   AppVehicle_ResetLineTracking();
   AppVehicle_ResetUltrasonicState();
   s_vehicle_state = VEHICLE_CARD_STANDBY;
   s_state_start_tick = HAL_GetTick();
+  s_line_recover_until_tick = 0U;
   AppMotor_SetForwardDirection();
   AppVehicle_StopMotion();
   AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
@@ -178,9 +227,13 @@ static void AppVehicle_ResetMission(void)
   s_vehicle_state = VEHICLE_WAIT_CARD;
   s_target_card = CARD_ID_NONE;
   s_target_stop_line = 0U;
+  s_final_stop_line = 0U;
+  s_pickup_done = 0U;
+  s_payload_raised = 0U;
   AppVehicle_ResetLineTracking();
   AppVehicle_ResetUltrasonicState();
   s_oled_showing_avoid = 0U;
+  s_line_recover_until_tick = 0U;
 #if ENABLE_MOTION_FEATURES
   AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
 #endif
@@ -318,9 +371,10 @@ static void AppVehicle_PollUltrasonic(uint32_t now)
 static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
 {
   uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
+  uint8_t line_recovering = AppVehicle_IsLineRecovering(now);
 
   AppVehicle_RestoreTargetStatus();
-  AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
+  AppServo_SetAngle((uint16_t)((s_payload_raised != 0U) ? SERVO_STOP_END_ANGLE_DEG : SERVO_RUN_ANGLE_DEG));
 
   if ((s_has_last_distance != 0U) && (s_last_distance_cm <= OBSTACLE_THRESHOLD_CM))
   {
@@ -350,6 +404,10 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
     }
 
     correction_pm = (int16_t)(error_x10 * LINE_KP_PM_PER_ERR10);
+    if (line_recovering != 0U)
+    {
+      correction_pm = (int16_t)(correction_pm * LINE_RECOVER_KP_NUM);
+    }
     duty_left_pm = (int32_t)LINE_BASE_DUTY_PM - correction_pm;
     duty_right_pm = (int32_t)LINE_BASE_DUTY_PM + correction_pm;
 
@@ -375,6 +433,12 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
     AppMotor_SetTargetFromDuty((uint16_t)duty_left_pm, (uint16_t)duty_right_pm);
   }
 
+  if (line_recovering != 0U)
+  {
+    AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
+    return;
+  }
+
   if (s_line_cross_latched == 0U)
   {
     if (norm_mask != 0U)
@@ -393,16 +457,23 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
         s_line_black_frame_count = 0U;
         s_line_black_seen_mask = 0U;
 
-        if ((s_target_stop_line != 0U) && (s_crossed_line_count >= s_target_stop_line))
+        if (s_pickup_done == 0U)
+        {
+          if ((s_target_stop_line != 0U) &&
+              (s_crossed_line_count >= s_target_stop_line))
+          {
+            s_vehicle_state = VEHICLE_STOPPING;
+            s_stop_start_tick = now;
+            s_stop_is_final = 0U;
+            AppVehicle_StopMotion();
+          }
+        }
+        else if ((s_final_stop_line != 0U) && (s_crossed_line_count >= s_final_stop_line))
         {
           s_vehicle_state = VEHICLE_STOPPING;
           s_stop_start_tick = now;
+          s_stop_is_final = 1U;
           AppVehicle_StopMotion();
-
-          if (s_stop_at_next_line != 0U)
-          {
-            s_target_stop_line = 0U;
-          }
         }
       }
     }
@@ -429,17 +500,18 @@ static void AppVehicle_RunStopping(uint32_t now)
   AppVehicle_RestoreTargetStatus();
   AppVehicle_StopMotion();
 
-  if (s_stop_at_next_line != 0U)
+  if (s_stop_is_final != 0U)
   {
+    s_payload_raised = 0U;
+    AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
     AppVehicle_ResetMission();
     return;
   }
 
-  if (elapsed >= (SERVO_ROTATE_DURATION_MS + SERVO_HOLD_DURATION_MS))
+  if (elapsed >= SERVO_HOLD_DURATION_MS)
   {
-    AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
-    s_stop_at_next_line = 1U;
-    s_target_stop_line = (uint8_t)(s_crossed_line_count + 1U);
+    s_pickup_done = 1U;
+    s_payload_raised = 1U;
     s_line_black_frame_count = 0U;
     s_line_black_seen_mask = 0U;
     s_line_cross_latched = 0U;
@@ -448,18 +520,7 @@ static void AppVehicle_RunStopping(uint32_t now)
     return;
   }
 
-  if (elapsed >= SERVO_ROTATE_DURATION_MS)
-  {
-    AppServo_SetAngle(SERVO_STOP_END_ANGLE_DEG);
-    return;
-  }
-
-  {
-    int32_t angle_delta = (int32_t)SERVO_STOP_END_ANGLE_DEG - (int32_t)SERVO_STOP_START_ANGLE_DEG;
-    uint16_t angle = (uint16_t)((int32_t)SERVO_STOP_START_ANGLE_DEG +
-      ((angle_delta * (int32_t)elapsed) / (int32_t)SERVO_ROTATE_DURATION_MS));
-    AppServo_SetAngle(angle);
-  }
+  AppServo_SetAngle(SERVO_STOP_END_ANGLE_DEG);
 }
 
 static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
@@ -469,10 +530,10 @@ static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
 
   AppMotor_SetEnable(1U);
   AppVehicle_SetAvoidTurn(0U, AVOID_RIGHT_DUTY_FAST_PM, AVOID_RIGHT_DUTY_SLOW_PM);
-  AppVehicle_ShowAvoidStatus((const uint8_t *)"AVOID:R-LINE", 12U);
+  AppVehicle_ShowAvoidStatus((const uint8_t *)"A:RLINE", 7U);
   AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
 
-  if (norm_mask != 0U)
+  if ((norm_mask & AVOID_LINE_EDGE_MASK) != 0U)
   {
     if (s_avoid_line_seen_count < 255U)
     {
@@ -491,6 +552,7 @@ static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
     s_line_black_frame_count = 0U;
     s_line_black_seen_mask = 0U;
     s_line_cross_latched = 0U;
+    s_line_recover_until_tick = now + LINE_RECOVER_BOOST_MS;
     s_last_line_pid_tick = now;
     s_vehicle_state = VEHICLE_LINE_FOLLOW;
   }
@@ -502,7 +564,7 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
       (s_ultrasonic_invalid_count >= HCSR04_INVALID_STOP_COUNT))
   {
     AppVehicle_StopMotion();
-    AppVehicle_ShowAvoidStatus((const uint8_t *)"US:FAIL STOP", 12U);
+    AppVehicle_ShowAvoidStatus((const uint8_t *)"US:FAIL", 7U);
     if (s_vehicle_state == VEHICLE_LINE_FOLLOW)
     {
       s_last_line_pid_tick = now;
@@ -549,7 +611,7 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
     case VEHICLE_AVOID_LEFT:
       AppMotor_SetEnable(1U);
       AppVehicle_SetAvoidTurn(1U, AVOID_LEFT_DUTY_FAST_PM, AVOID_LEFT_DUTY_SLOW_PM);
-      AppVehicle_ShowAvoidStatus((const uint8_t *)"AVOID:LEFT", 10U);
+      AppVehicle_ShowAvoidStatus((const uint8_t *)"A:LEFT", 6U);
       AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
       if ((now - s_state_start_tick) >= AVOID_LEFT_MS)
       {
@@ -561,7 +623,7 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
     case VEHICLE_AVOID_FORWARD:
       AppMotor_SetEnable(1U);
       AppMotor_SetTargetFromDuty(AVOID_FORWARD_DUTY_PM, AVOID_FORWARD_DUTY_PM);
-      AppVehicle_ShowAvoidStatus((const uint8_t *)"AVOID:FWD", 9U);
+      AppVehicle_ShowAvoidStatus((const uint8_t *)"A:FWD", 5U);
       AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
       if ((now - s_state_start_tick) >= AVOID_FORWARD_MS)
       {
@@ -573,7 +635,7 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
     case VEHICLE_AVOID_RIGHT_ALIGN:
       AppMotor_SetEnable(1U);
       AppVehicle_SetAvoidTurn(0U, AVOID_RIGHT_ALIGN_DUTY_FAST_PM, AVOID_RIGHT_ALIGN_DUTY_SLOW_PM);
-      AppVehicle_ShowAvoidStatus((const uint8_t *)"AVOID:R-ALIGN", 13U);
+      AppVehicle_ShowAvoidStatus((const uint8_t *)"A:RANG", 6U);
       AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
       if ((now - s_state_start_tick) >= AVOID_RIGHT_ALIGN_MS)
       {
@@ -585,7 +647,7 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
     case VEHICLE_AVOID_RETURN_FORWARD:
       AppMotor_SetEnable(1U);
       AppMotor_SetTargetFromDuty(AVOID_RETURN_FORWARD_DUTY_PM, AVOID_RETURN_FORWARD_DUTY_PM);
-      AppVehicle_ShowAvoidStatus((const uint8_t *)"AVOID:RETURN", 12U);
+      AppVehicle_ShowAvoidStatus((const uint8_t *)"A:RET", 5U);
       AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
       if ((now - s_state_start_tick) >= AVOID_RETURN_FORWARD_MS)
       {
@@ -640,6 +702,8 @@ void AppVehicle_Task(void)
 {
   uint32_t now = HAL_GetTick();
   uint8_t ir_mask = AppLine_ReadMask();
+
+  AppVehicle_ReportEncoderCounts(now);
 
 #if ENABLE_MOTION_FEATURES
   AppServo_Task();
