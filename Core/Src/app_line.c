@@ -45,7 +45,7 @@ uint8_t AppLine_ComputeErrorX10(uint8_t raw_mask, int16_t *error_x10)
   int8_t i;
   int16_t weighted_sum = 0;
   int16_t hit_count = 0;
-  static const int8_t weights[5] = {-2, -1, 0, 1, 2};
+  static const int8_t weights[5] = {-5, -1, 0, 1, 5};
 
   if (error_x10 == 0)
   {

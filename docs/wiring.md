@@ -1,95 +1,50 @@
-# 接线说明（STM32F103C8 工程）
+# 接线说明：STM32F103C8 + TB6612 编码器扩展板
 
-## 1. 适用范围
+## TB6612 控制线
 
-本文档基于当前固件引脚配置，说明本工程应如何接线。
-配置来源：
-- [Core/Inc/main.h](Core/Inc/main.h)
-- [Core/Src/gpio.c](Core/Src/gpio.c)
-- [Core/Src/tim.c](Core/Src/tim.c)
-- [agv_cyf_3220433037.ioc](agv_cyf_3220433037.ioc)
+| STM32 引脚 | 驱动板引脚 | 说明 |
+|---|---|---|
+| PA8 | PWMA | A 电机 PWM |
+| PA9 | PWMB | B 电机 PWM |
+| PB6 | AIN1 | A 电机方向 1 |
+| PB7 | AIN2 | A 电机方向 2 |
+| PB4 | BIN1 | B 电机方向 1 |
+| PB3 | BIN2 | B 电机方向 2 |
+| PB5 | STBY | TB6612 使能 |
 
-## 2. 硬件假设
+## 电机与编码器
 
-工程中 AIN1/AIN2/BIN1/BIN2/STBY 这组命名，符合双路 H 桥电机驱动器（例如 TB6612FNG 风格）的常见定义。
-如果你使用的是其他型号驱动器，请按功能对应映射：PWM、方向、待机/使能。
+| 驱动板引脚 | STM32 引脚 | 说明 |
+|---|---|---|
+| AO1/AO2 | 电机 A 两端 | 第 1 路电机 |
+| BO1/BO2 | 电机 B 两端 | 第 2 路电机 |
+| E1A | PA12 | A 电机编码器 A 相，中断输入 |
+| E1B | PA15 | A 电机编码器 B 相，方向判断 |
+| E2A | PA10 | B 电机编码器 A 相，中断输入 |
+| E2B | PA11 | B 电机编码器 B 相，方向判断 |
 
-## 3. MCU 引脚映射
+编码器 VCC 按电机编码器规格接 3.3 V 或 5 V。若编码器输出是 5 V 推挽信号，必须降压或确认模块输出兼容 STM32 的 3.3 V 输入。
 
-| MCU 引脚 | 固件标签 | 方向 | 功能 |
-|---|---|---|---|
-| PC13 | LED | 输出 | 板载状态灯 |
-| PA8 | TIM1_CH1 | 复用推挽输出 | PWM 输出通道 A |
-| PA9 | TIM1_CH2 | 复用推挽输出 | PWM 输出通道 B |
-| PB6 | AIN1 | 输出 | 电机 A 方向输入 1 |
-| PB7 | AIN2 | 输出 | 电机 A 方向输入 2 |
-| PB4 | BIN1 | 输出 | 电机 B 方向输入 1 |
-| PB3 | BIN2 | 输出 | 电机 B 方向输入 2 |
-| PB5 | STBY | 输出 | 驱动器待机/使能控制 |
-| PB10 | USART3_TX | 复用推挽输出 | 串口发送 |
-| PB11 | USART3_RX | 输入 | 串口接收 |
-| PA0 | TIM2_CH1 | 复用推挽输出 | 预留 PWM 输出（当前主循环未启动） |
-| PA13 | SWDIO | 调试 | SWD 数据脚 |
-| PA14 | SWCLK | 调试 | SWD 时钟脚 |
+## 供电
 
-## 4. 推荐接线（双路 H 桥驱动）
+| 连接 | 说明 |
+|---|---|
+| MCU GND -> 驱动板 GND | 必须共地 |
+| MCU 3V3 -> 驱动板 VCC | TB6612 逻辑电源 |
+| 电池正极 -> 驱动板 VM | 电机电源 |
+| 电池负极 -> 驱动板 GND | 电机电源地 |
 
-### 控制信号
+## ADC 采样口
 
-- PA8 -> PWMA
-- PA9 -> PWMB
-- PB6 -> AIN1
-- PB7 -> AIN2
-- PB4 -> BIN1
-- PB3 -> BIN2
-- PB5 -> STBY
+本次代码先实现编码器速度闭环，ADC 采样暂未启用。若后续要接 ADC，请另选未占用的 ADC 输入脚，并在 CubeMX 中启用 ADC1。
 
-### 串口调试（USART3）
+## 调方向
 
-- USB 转串口 RX -> PB10（USART3_TX）
-- USB 转串口 TX -> PB11（USART3_RX）
-- USB 转串口 GND -> MCU GND
+OLED 已占用 PA6/PA7 作为软 I2C 的 SCL/SDA，所以编码器不要再接 PA7。
+PA15 默认属于 JTAG 引脚，本工程已关闭 JTAG 并保留 SWD，因此 PA15 可以作为普通输入使用；下载调试仍使用 PA13/PA14。
+当前代码已启用 `MOTOR_SWAP_PWM_OUTPUTS`：逻辑左轮速度会输出到 PA9/PWMB，逻辑右轮速度会输出到 PA8/PWMA。若你的车实际是 PA8 控左轮、PA9 控右轮，把 `Core/Src/app_motor.c` 里的 `MOTOR_SWAP_PWM_OUTPUTS` 改为 `0U`。
 
-### 供电与电机侧
+当前左编码器方向已在代码中设为 `ENC_LEFT_DIR_SIGN = -1`。如果某一路前进时仍越补越快，优先交换该路编码器 A/B 两根线；也可以在 `Core/Src/app_encoder.c` 中调整 `ENC_LEFT_DIR_SIGN` 或 `ENC_RIGHT_DIR_SIGN`。
+当前主程序默认关闭速度闭环，`ENABLE_MOTOR_CLOSED_LOOP = 0U`，先用开环 PWM 恢复红外巡线修正。确认 E1A/E2A 有稳定脉冲后，再把它改为 `1U`。
 
-- MCU GND -> 驱动器 GND（必须共地）
-- MCU 3V3 -> 驱动器逻辑电源 VCC
-- 电机电源正极 -> 驱动器 VM（或 VIN_MOTOR）
-- 电机电源负极 -> 驱动器 GND
-- 驱动器 AO1/AO2 -> 电机 A 两端
-- 驱动器 BO1/BO2 -> 电机 B 两端
-
-## 5. 当前固件行为说明
-
-根据 [Core/Src/main.c](Core/Src/main.c)：
-
-- 已启动 TIM1 的 PWM CH1 和 CH2。
-- STBY 被拉高（驱动器使能）。
-- AIN1 为高、AIN2 为低（电机 A 方向已设定）。
-- BIN1/BIN2 在初始化后没有在用户代码中更新，因此保持为 GPIO 初始化时的低电平。
-
-实际效果：
-- A 通道处于主动驱动状态。
-- B 通道状态取决于你的驱动器真值表中 BIN1=0、BIN2=0 的定义（很多驱动器表现为刹车或滑行）。
-
-## 6. PWM 参数（当前配置）
-
-- TIM1：Prescaler = 72-1，Period = 1000-1，计数时钟 = 72 MHz
-  - PWM 频率 = 72 MHz / 72 / 1000 = 1 kHz
-- TIM2：Prescaler = 72-1，Period = 20000-1
-  - PWM 频率 = 72 MHz / 72 / 20000 = 50 Hz
-
-## 7. 上电检查清单
-
-1. 确认 MCU 与驱动器共地。
-2. 确认驱动器逻辑电平兼容 3.3 V。
-3. 上电后确认 STBY 为高电平。
-4. 用示波器检查 PA8/PA9 是否有 PWM 波形。
-5. 如果只有一路电机响应，优先检查 BIN1/BIN2 逻辑是否按需求更新。
-6. 如果下载或调试失败，检查 PA13/PA14 的 SWD 连线与供电稳定性。
-
-## 8. 安全注意事项
-
-- 不要从 MCU 的 3V3 引脚给电机供电。
-- 建议在驱动器 VM 与 GND 旁增加大电容，抑制电机启动电流冲击。
-- 首次测试请先用较小占空比，逐步提升。
+如果电机方向相反，交换该电机 AO1/AO2 或 BO1/BO2，或者调整 `Core/Src/app_motor.c` 里的方向 GPIO 输出逻辑。

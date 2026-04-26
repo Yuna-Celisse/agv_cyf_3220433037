@@ -416,6 +416,11 @@
               <FilePath>../Core/Src/app_motor.c</FilePath>
             </File>
             <File>
+              <FileName>app_encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_encoder.c</FilePath>
+            </File>
+            <File>
               <FileName>app_servo.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/app_servo.c</FilePath>

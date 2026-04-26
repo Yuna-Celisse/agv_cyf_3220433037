@@ -1,12 +1,13 @@
       Code (inc. data)   RO Data    RW Data    ZI Data      Debug   Object Name
+       444          0          0          0          8          0   app_encoder.o
        390          0          5          0          0          0   app_line.o
-       270          0          0          0          0          0   app_motor.o
+      1342          0          0          0         35          0   app_motor.o
       1276          0         41          0         68          0   app_oled_ui.o
        460          0          8          0          9          0   app_rfid.o
        146          0          0          2          0          0   app_servo.o
       1094          0          0          0         13          0   app_ultrasonic.o
        336          0          0          0          0          0   gpio.o
-      2596          0          0          0         28          0   main.o
+      3222          0          0          0         30          0   main.o
       2136          0       6080          0       1152          0   oled.o
       1744          0          0          0          0          0   rc522.o
         64          0        236          0       1536          0   startup_stm32f103xb.o
@@ -19,9 +20,9 @@
       2904          0          0          0          0          0   stm32f1xx_hal_tim.o
        398          0          0          0          0          0   stm32f1xx_hal_tim_ex.o
       2696          0          0          0          0          0   stm32f1xx_hal_uart.o
-        60          0          0          0          0          0   stm32f1xx_it.o
+        80          0          0          0          0          0   stm32f1xx_it.o
          2          0         24          4          0          0   system_stm32f1xx.o
-      1494          0          0          0        288          0   tim.o
+      1340          0          0          0        288          0   tim.o
        236          0          0          0         72          0   usart.o
 Object Totals
 
@@ -29,8 +30,8 @@ Memory Map of the image
 
 	Load Region LR_IROM1 
 
-		Execution Region ER_IROM1 (Exec base: 0x08000000, Size: 0x000075B0, Max: 0x00010000, END)
+		Execution Region ER_IROM1 (Exec base: 0x08000000, Size: 0x00007D98, Max: 0x00010000, END)
 
-		Execution Region RW_IRAM1 (Exec base: 0x20000000, Size: 0x00000CE0, Max: 0x00005000, END)
+		Execution Region RW_IRAM1 (Exec base: 0x20000000, Size: 0x00000D10, Max: 0x00005000, END)
 
 Image component sizes

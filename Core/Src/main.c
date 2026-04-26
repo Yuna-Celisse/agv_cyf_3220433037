@@ -27,6 +27,7 @@
 
 #include "rc522.h"
 #include "oled.h"
+#include "app_encoder.h"
 #include "app_line.h"
 #include "app_motor.h"
 #include "app_servo.h"
@@ -50,6 +51,7 @@
 #define HCSR04_MEASURE_INTERVAL_MS 100U
 #define HCSR04_MOVE_INTERVAL_MS 140U
 #define HCSR04_MAX_JUMP_CM 25U
+#define HCSR04_INVALID_STOP_COUNT 3U
 #define RESTORE_STAGE_US_ONLY 0U
 #define RESTORE_STAGE_SENSOR_UI 1U
 #define RESTORE_STAGE_FULL 2U
@@ -58,6 +60,7 @@
 #define ENABLE_NON_MOTION_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_SENSOR_UI)
 #define ENABLE_MOTION_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
 #define ENABLE_RFID_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
+#define ENABLE_MOTOR_CLOSED_LOOP 0U
 /* Duty values are in per-mille: 0..1000 */
 #define LINE_BASE_DUTY_PM 160U
 #define LINE_MIN_DUTY_PM 50U
@@ -75,19 +78,22 @@
 #define LINE_BLACK_CONFIRM_FRAMES 3U
 #define OBSTACLE_THRESHOLD_CM 20U
 #define AVOID_RIGHT_MS 620U
-#define AVOID_LEFT_MS 650U
-#define AVOID_FORWARD_MS 280U
-#define AVOID_RIGHT_ALIGN_MS 260U
-#define AVOID_RIGHT_RETURN_MS 360U
+#define AVOID_LEFT_MS 850U
+#define AVOID_FORWARD_MS 180U
+#define AVOID_RIGHT_ALIGN_MS 520U
+#define AVOID_RETURN_FORWARD_MS 1400U
+#define AVOID_RIGHT_SEARCH_MAX_MS 1600U
+#define AVOID_LINE_CONFIRM_FRAMES 2U
 #define AVOID_DUTY_FAST_PM 220U
 #define AVOID_DUTY_SLOW_PM 80U
 #define AVOID_RIGHT_DUTY_FAST_PM 260U
 #define AVOID_RIGHT_DUTY_SLOW_PM 50U
 #define AVOID_LEFT_DUTY_FAST_PM 260U
 #define AVOID_LEFT_DUTY_SLOW_PM 50U
-#define AVOID_FORWARD_DUTY_PM 170U
-#define AVOID_RIGHT_ALIGN_DUTY_FAST_PM 220U
-#define AVOID_RIGHT_ALIGN_DUTY_SLOW_PM 120U
+#define AVOID_FORWARD_DUTY_PM 230U
+#define AVOID_RETURN_FORWARD_DUTY_PM 230U
+#define AVOID_RIGHT_ALIGN_DUTY_FAST_PM 260U
+#define AVOID_RIGHT_ALIGN_DUTY_SLOW_PM 80U
 
 #define CARD_ID_NONE 0U
 #define CARD_ID_A 1U
@@ -107,6 +113,7 @@ static uint32_t last_ultrasonic_poll_tick = 0U;
 static uint16_t last_distance_cm = 0U;
 static uint8_t has_last_distance = 0U;
 static uint8_t ultrasonic_jump_reject_count = 0U;
+static uint8_t ultrasonic_invalid_count = 0U;
 static uint32_t last_line_pid_tick = 0U;
 
 typedef enum
@@ -118,7 +125,8 @@ typedef enum
   VEHICLE_AVOID_RIGHT,
   VEHICLE_AVOID_LEFT,
   VEHICLE_AVOID_FORWARD,
-  VEHICLE_AVOID_RIGHT_ALIGN
+  VEHICLE_AVOID_RIGHT_ALIGN,
+  VEHICLE_AVOID_RETURN_FORWARD
 } VehicleState_t;
 
 static VehicleState_t vehicle_state = VEHICLE_WAIT_CARD;
@@ -128,6 +136,7 @@ static uint8_t crossed_line_count = 0U;
 static uint8_t line_black_frame_count = 0U;
 static uint8_t line_black_seen_mask = 0U;
 static uint8_t line_cross_latched = 0U;
+static uint8_t avoid_line_seen_count = 0U;
 static uint32_t state_start_tick = 0U;
 static uint32_t stop_start_tick = 0U;
 static uint8_t stop_at_next_line = 0U;
@@ -139,6 +148,9 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void HCSR04_InitPins(void);
 static void StartMission(uint8_t card_id);
+static uint8_t IsUltrasonicMotionState(VehicleState_t state);
+static void ResetUltrasonicState(void);
+static void AppSetAvoidTurn(uint8_t turn_left, uint16_t fast_pm, uint16_t slow_pm);
 
 /* USER CODE END PFP */
 
@@ -148,6 +160,36 @@ static void StartMission(uint8_t card_id);
 static void HCSR04_InitPins(void)
 {
   AppUltrasonic_Init(ENABLE_ULTRASONIC_UART_REPORT);
+}
+
+static uint8_t IsUltrasonicMotionState(VehicleState_t state)
+{
+  return (uint8_t)((state == VEHICLE_LINE_FOLLOW) ||
+                   (state == VEHICLE_AVOID_RIGHT) ||
+                   (state == VEHICLE_AVOID_LEFT) ||
+                   (state == VEHICLE_AVOID_FORWARD) ||
+                   (state == VEHICLE_AVOID_RIGHT_ALIGN) ||
+                   (state == VEHICLE_AVOID_RETURN_FORWARD));
+}
+
+static void ResetUltrasonicState(void)
+{
+  last_distance_cm = 0U;
+  has_last_distance = 0U;
+  ultrasonic_jump_reject_count = 0U;
+  ultrasonic_invalid_count = 0U;
+}
+
+static void AppSetAvoidTurn(uint8_t turn_left, uint16_t fast_pm, uint16_t slow_pm)
+{
+  if (turn_left != 0U)
+  {
+    AppMotor_SetTargetFromDuty(fast_pm, slow_pm);
+  }
+  else
+  {
+    AppMotor_SetTargetFromDuty(slow_pm, fast_pm);
+  }
 }
 
 static void StartMission(uint8_t card_id)
@@ -163,8 +205,10 @@ static void StartMission(uint8_t card_id)
   line_black_frame_count = 0U;
   line_black_seen_mask = 0U;
   line_cross_latched = 0U;
+  avoid_line_seen_count = 0U;
   last_line_pid_tick = 0U;
   stop_at_next_line = 0U;
+  ResetUltrasonicState();
   vehicle_state = VEHICLE_CARD_STANDBY;
   state_start_tick = HAL_GetTick();
   AppMotor_SetForwardDirection();
@@ -211,6 +255,7 @@ int main(void)
   MX_TIM4_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  AppEncoder_Init();
 #if ENABLE_NON_MOTION_FEATURES
   OLED_Init();
   AppOled_ShowSwipePrompt();
@@ -221,6 +266,7 @@ int main(void)
 #if ENABLE_MOTION_FEATURES
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  AppMotor_SetClosedLoop(ENABLE_MOTOR_CLOSED_LOOP);
   AppMotor_SetForwardDirection();
   AppMotor_SetEnable(0U);
 #endif
@@ -282,21 +328,11 @@ int main(void)
       ultrasonic_enabled = 0U;
     }
 
-    if ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
-      (vehicle_state == VEHICLE_AVOID_RIGHT) ||
-      (vehicle_state == VEHICLE_AVOID_LEFT) ||
-      (vehicle_state == VEHICLE_AVOID_FORWARD) ||
-      (vehicle_state == VEHICLE_AVOID_RIGHT_ALIGN))
+    if (IsUltrasonicMotionState(vehicle_state) != 0U)
     {
       ultrasonic_interval_ms = HCSR04_MOVE_INTERVAL_MS;
     }
   #endif
-
-    if ((ultrasonic_enabled != 0U) && ((now - last_ultrasonic_poll_tick) >= ultrasonic_interval_ms))
-    {
-      last_ultrasonic_poll_tick = now;
-      AppUltrasonic_StartMeasure();
-    }
 
     AppUltrasonic_Task(now);
 
@@ -310,11 +346,7 @@ int main(void)
         {
 #if ENABLE_MOTION_FEATURES
           if ((has_last_distance != 0U) &&
-              ((vehicle_state == VEHICLE_LINE_FOLLOW) ||
-               (vehicle_state == VEHICLE_AVOID_RIGHT) ||
-               (vehicle_state == VEHICLE_AVOID_LEFT) ||
-               (vehicle_state == VEHICLE_AVOID_FORWARD) ||
-               (vehicle_state == VEHICLE_AVOID_RIGHT_ALIGN)))
+              (IsUltrasonicMotionState(vehicle_state) != 0U))
           {
             uint16_t diff_cm = (distance_cm > last_distance_cm) ?
               (uint16_t)(distance_cm - last_distance_cm) :
@@ -322,7 +354,11 @@ int main(void)
 
             if (diff_cm > HCSR04_MAX_JUMP_CM)
             {
-              if (ultrasonic_jump_reject_count < 2U)
+              if ((distance_cm < last_distance_cm) && (distance_cm <= OBSTACLE_THRESHOLD_CM))
+              {
+                ultrasonic_jump_reject_count = 0U;
+              }
+              else if (ultrasonic_jump_reject_count < 2U)
               {
                 ultrasonic_jump_reject_count++;
                 distance_cm = last_distance_cm;
@@ -345,12 +381,34 @@ int main(void)
 
           last_distance_cm = distance_cm;
           has_last_distance = 1U;
+          ultrasonic_invalid_count = 0U;
         }
         else
         {
           has_last_distance = 0U;
+#if ENABLE_MOTION_FEATURES
+          if (IsUltrasonicMotionState(vehicle_state) != 0U)
+          {
+            if (ultrasonic_invalid_count < 255U)
+            {
+              ultrasonic_invalid_count++;
+            }
+          }
+          else
+          {
+            ultrasonic_invalid_count = 0U;
+          }
+#else
+          ultrasonic_invalid_count = 0U;
+#endif
         }
       }
+    }
+
+    if ((ultrasonic_enabled != 0U) && ((now - last_ultrasonic_poll_tick) >= ultrasonic_interval_ms))
+    {
+      last_ultrasonic_poll_tick = now;
+      AppUltrasonic_StartMeasure();
     }
 
 #if !ENABLE_MOTION_FEATURES
@@ -359,6 +417,23 @@ int main(void)
   #endif
     continue;
 #endif
+
+    if ((IsUltrasonicMotionState(vehicle_state) != 0U) &&
+        (ultrasonic_invalid_count >= HCSR04_INVALID_STOP_COUNT))
+    {
+      AppMotor_SetEnable(0U);
+      AppMotor_SetDuty(0U, 0U);
+      if (vehicle_state == VEHICLE_LINE_FOLLOW)
+      {
+        last_line_pid_tick = now;
+      }
+      else
+      {
+        state_start_tick = now;
+      }
+      AppOled_ShowDistance(has_last_distance, last_distance_cm);
+      continue;
+    }
 
     switch (vehicle_state)
     {
@@ -387,6 +462,7 @@ int main(void)
         if ((has_last_distance != 0U) && (last_distance_cm <= OBSTACLE_THRESHOLD_CM))
         {
           vehicle_state = VEHICLE_AVOID_LEFT;
+          avoid_line_seen_count = 0U;
           state_start_tick = now;
           break;
         }
@@ -406,8 +482,8 @@ int main(void)
           }
 
           correction_pm = (int16_t)(error_x10 * LINE_KP_PM_PER_ERR10);
-          duty_left_pm = (int32_t)LINE_BASE_DUTY_PM + correction_pm;
-          duty_right_pm = (int32_t)LINE_BASE_DUTY_PM - correction_pm;
+          duty_left_pm = (int32_t)LINE_BASE_DUTY_PM - correction_pm;
+          duty_right_pm = (int32_t)LINE_BASE_DUTY_PM + correction_pm;
 
           if (duty_left_pm < (int32_t)LINE_MIN_DUTY_PM)
           {
@@ -428,7 +504,7 @@ int main(void)
           }
 
           AppMotor_SetEnable(1U);
-          AppMotor_SetDuty((uint16_t)duty_left_pm, (uint16_t)duty_right_pm);
+          AppMotor_SetTargetFromDuty((uint16_t)duty_left_pm, (uint16_t)duty_right_pm);
 
           if (line_cross_latched == 0U)
           {
@@ -525,18 +601,42 @@ int main(void)
       }
 
       case VEHICLE_AVOID_RIGHT:
+      {
+        uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
+        uint32_t elapsed = now - state_start_tick;
+
         AppMotor_SetEnable(1U);
-        AppMotor_SetDuty(AVOID_RIGHT_DUTY_FAST_PM, AVOID_RIGHT_DUTY_SLOW_PM);
+        AppSetAvoidTurn(0U, AVOID_RIGHT_DUTY_FAST_PM, AVOID_RIGHT_DUTY_SLOW_PM);
         AppOled_ShowDistance(has_last_distance, last_distance_cm);
-        if ((now - state_start_tick) >= AVOID_RIGHT_RETURN_MS)
+
+        if (norm_mask != 0U)
         {
+          if (avoid_line_seen_count < 255U)
+          {
+            avoid_line_seen_count++;
+          }
+        }
+        else
+        {
+          avoid_line_seen_count = 0U;
+        }
+
+        if ((avoid_line_seen_count >= AVOID_LINE_CONFIRM_FRAMES) ||
+            (elapsed >= AVOID_RIGHT_SEARCH_MAX_MS))
+        {
+          avoid_line_seen_count = 0U;
+          line_black_frame_count = 0U;
+          line_black_seen_mask = 0U;
+          line_cross_latched = 0U;
+          last_line_pid_tick = now;
           vehicle_state = VEHICLE_LINE_FOLLOW;
         }
         break;
+      }
 
       case VEHICLE_AVOID_LEFT:
         AppMotor_SetEnable(1U);
-        AppMotor_SetDuty(AVOID_LEFT_DUTY_SLOW_PM, AVOID_LEFT_DUTY_FAST_PM);
+        AppSetAvoidTurn(1U, AVOID_LEFT_DUTY_FAST_PM, AVOID_LEFT_DUTY_SLOW_PM);
         AppOled_ShowDistance(has_last_distance, last_distance_cm);
         if ((now - state_start_tick) >= AVOID_LEFT_MS)
         {
@@ -547,7 +647,7 @@ int main(void)
 
       case VEHICLE_AVOID_FORWARD:
         AppMotor_SetEnable(1U);
-        AppMotor_SetDuty(AVOID_FORWARD_DUTY_PM, AVOID_FORWARD_DUTY_PM);
+        AppMotor_SetTargetFromDuty(AVOID_FORWARD_DUTY_PM, AVOID_FORWARD_DUTY_PM);
         AppOled_ShowDistance(has_last_distance, last_distance_cm);
         if ((now - state_start_tick) >= AVOID_FORWARD_MS)
         {
@@ -558,11 +658,23 @@ int main(void)
 
       case VEHICLE_AVOID_RIGHT_ALIGN:
         AppMotor_SetEnable(1U);
-        AppMotor_SetDuty(AVOID_RIGHT_ALIGN_DUTY_FAST_PM, AVOID_RIGHT_ALIGN_DUTY_SLOW_PM);
+        AppSetAvoidTurn(0U, AVOID_RIGHT_ALIGN_DUTY_FAST_PM, AVOID_RIGHT_ALIGN_DUTY_SLOW_PM);
         AppOled_ShowDistance(has_last_distance, last_distance_cm);
         if ((now - state_start_tick) >= AVOID_RIGHT_ALIGN_MS)
         {
+          vehicle_state = VEHICLE_AVOID_RETURN_FORWARD;
+          state_start_tick = now;
+        }
+        break;
+
+      case VEHICLE_AVOID_RETURN_FORWARD:
+        AppMotor_SetEnable(1U);
+        AppMotor_SetTargetFromDuty(AVOID_RETURN_FORWARD_DUTY_PM, AVOID_RETURN_FORWARD_DUTY_PM);
+        AppOled_ShowDistance(has_last_distance, last_distance_cm);
+        if ((now - state_start_tick) >= AVOID_RETURN_FORWARD_MS)
+        {
           vehicle_state = VEHICLE_AVOID_RIGHT;
+          avoid_line_seen_count = 0U;
           state_start_tick = now;
         }
         break;
@@ -571,6 +683,8 @@ int main(void)
         vehicle_state = VEHICLE_WAIT_CARD;
         break;
     }
+
+    AppMotor_Task(now);
 
     /* USER CODE END WHILE */
 
@@ -623,6 +737,7 @@ void SystemClock_Config(void)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   AppUltrasonic_HandleEchoExti(GPIO_Pin);
+  AppEncoder_HandleExti(GPIO_Pin);
 }
 
 /* USER CODE END 4 */
