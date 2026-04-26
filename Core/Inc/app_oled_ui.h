@@ -12,5 +12,7 @@ void AppOled_ShowSwipePrompt(void);                                      /* 显�
 void AppOled_ShowTarget(uint8_t card_id);                                /* 显示当前目标卡 */
 void AppOled_ShowDistance(uint8_t has_distance, uint16_t distance_cm);   /* 显示超声波距离 */
 void AppOled_ShowStatus(const uint8_t *status, uint8_t len);             /* 显示运行/避障状态 */
+void AppOled_ShowAction(const uint8_t *action, uint8_t len);             /* 在第三行显示动作提示 */
+void AppOled_ClearAction(void);                                          /* 清空第三行动作提示 */
 
 #endif /* APP_OLED_UI_H */

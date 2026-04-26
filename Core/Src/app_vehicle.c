@@ -224,6 +224,7 @@ static void AppVehicle_StartMission(uint8_t card_id)
   AppVehicle_StopMotion();
   AppServo_SetAngle(SERVO_STOP_START_ANGLE_DEG);
   AppOled_ShowTarget(card_id);
+  AppOled_ClearAction();
   s_oled_showing_avoid = 0U;
 }
 
@@ -242,6 +243,7 @@ static void AppVehicle_ResetMission(void)
 #if ENABLE_MOTION_FEATURES
   AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
 #endif
+  AppOled_ClearAction();
 }
 
 static void AppVehicle_ProcessRfid(uint32_t now)
@@ -380,6 +382,7 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
 
   AppVehicle_RestoreTargetStatus();
   AppServo_SetAngle((uint16_t)((s_payload_raised != 0U) ? SERVO_STOP_END_ANGLE_DEG : SERVO_RUN_ANGLE_DEG));
+  AppOled_ClearAction();
 
   if ((AppVehicle_IsUltrasonicFaulted() == 0U) &&
       (s_has_last_distance != 0U) &&
@@ -509,6 +512,13 @@ static void AppVehicle_RunStopping(uint32_t now)
 
   if (s_stop_is_final != 0U)
   {
+    AppOled_ShowAction((const uint8_t *)"ARRIVE", 6U);
+    if (elapsed < SERVO_HOLD_DURATION_MS)
+    {
+      AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
+      return;
+    }
+
     s_payload_raised = 0U;
     AppServo_SetAngle(SERVO_RUN_ANGLE_DEG);
     AppVehicle_ResetMission();
@@ -527,6 +537,7 @@ static void AppVehicle_RunStopping(uint32_t now)
     return;
   }
 
+  AppOled_ShowAction((const uint8_t *)"GET", 3U);
   AppServo_SetAngle(SERVO_STOP_END_ANGLE_DEG);
 }
 
