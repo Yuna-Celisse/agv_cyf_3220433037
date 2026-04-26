@@ -2,7 +2,12 @@
 
 #include "main.h"
 
-/* This module counts wheel encoder pulses with GPIO EXTI interrupts. */
+/*
+ * 编码器模块负责统计左右轮累计脉冲数。
+ * 实现方式是：
+ * - A 相接外部中断，任意边沿触发计数；
+ * - B 相在中断里同步采样，用于判断旋转方向。
+ */
 
 /* Wiring used by this firmware:
  * E1A -> PA12, E1B -> PA15
@@ -23,7 +28,7 @@
 static volatile int32_t s_left_count = 0;  /* 左轮累计编码器计数 */
 static volatile int32_t s_right_count = 0; /* 右轮累计编码器计数 */
 
-/* Determine direction from the A/B phase relationship at the edge time. */
+/* 根据 A/B 相的相对电平关系判断当前这一步应当加一还是减一。 */
 static int8_t AppEncoder_ReadStep(GPIO_TypeDef *a_port,
                                   uint16_t a_pin,
                                   GPIO_TypeDef *b_port,
@@ -37,7 +42,11 @@ static int8_t AppEncoder_ReadStep(GPIO_TypeDef *a_port,
   return (int8_t)(step * dir_sign); /* 再乘轮子方向修正符号，得到最终步进 */
 }
 
-/* Encoder A uses EXTI edges, encoder B is sampled to infer direction. */
+/*
+ * 初始化编码器引脚。
+ * A 相配置为双边沿中断，提高计数分辨率；
+ * B 相配置为普通上拉输入，仅在中断中被读取。
+ */
 void AppEncoder_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -68,7 +77,7 @@ void AppEncoder_Init(void)
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);           /* 使能中断 */
 }
 
-/* Only A-phase edges update counts; B-phase is read as direction context. */
+/* 只在 A 相边沿到来时更新计数，B 相仅作为方向判定参考。 */
 void AppEncoder_HandleExti(uint16_t gpio_pin)
 {
   if (gpio_pin == ENC_LEFT_A_Pin)
@@ -91,7 +100,7 @@ void AppEncoder_HandleExti(uint16_t gpio_pin)
   }
 }
 
-/* Clear both counters atomically because ISR code updates them too. */
+/* 清零左右轮累计计数，关中断是为了避免与 EXTI 更新冲突。 */
 void AppEncoder_Reset(void)
 {
   __disable_irq();  /* 关中断，避免读写竞争 */
@@ -100,7 +109,7 @@ void AppEncoder_Reset(void)
   __enable_irq();   /* 开中断 */
 }
 
-/* Snapshot counters atomically so the caller sees a consistent pair. */
+/* 原子方式读取左右轮计数，保证上层拿到的是同一时刻的快照。 */
 AppEncoder_Counts_t AppEncoder_GetCounts(void)
 {
   AppEncoder_Counts_t counts;

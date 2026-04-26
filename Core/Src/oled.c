@@ -2,11 +2,16 @@
 #include "stdlib.h"
 #include "oledfont.h"  	 
 
-/* SSD1306-style OLED driver implemented with software I2C on GPIO pins. */
+/*
+ * 这是 OLED 底层驱动文件。
+ * 它采用 GPIO 模拟 I2C 的方式和 SSD1306 类控制器通信，
+ * 并在内部维护一个显示缓存 OLED_GRAM，所有图形和文字先画到缓存，
+ * 再统一刷新到屏幕。
+ */
 
 u8 OLED_GRAM[144][8];
 
-/* Short deterministic delay to shape bit-banged I2C timing. */
+/* 软件 I2C 的微小固定延时，用来保证时序稳定。 */
 static void OLED_I2C_Delay(void)
 {
 	volatile uint8_t i;
@@ -17,7 +22,10 @@ static void OLED_I2C_Delay(void)
 	}
 }
 
-/* Send one command/data burst prefixed with the SSD1306 control byte. */
+/*
+ * 发送一段带控制字节的数据。
+ * control 用来区分后面跟的是命令流还是显示数据流。
+ */
 static void OLED_I2C_SendWithControl(u8 control, const u8 *data, u16 len, u8 addr)
 {
 	u16 i;
@@ -35,7 +43,7 @@ static void OLED_I2C_SendWithControl(u8 control, const u8 *data, u16 len, u8 add
 	I2C_Stop();
 }
 
-/* Flush one 128-byte page from GRAM to the panel. */
+/* 把缓存中的一个页（page）完整写入 OLED。 */
 static void OLED_WritePageData(u8 page)
 {
 	u8 n;
@@ -52,7 +60,7 @@ static void OLED_WritePageData(u8 page)
 #endif
 }
 
-/* Position the SSD1306 write cursor to a page-aligned column address. */
+/* 设置 OLED 当前写入页和列起始地址。 */
 static void OLED_SetPageAddress(u8 page)
 {
 	u8 col = (u8)OLED_COL_OFFSET;
@@ -202,7 +210,7 @@ void OLED_Refresh(void)
   }
 }
 
-/* Partial refresh keeps UI updates faster than repainting the full frame. */
+/* 只刷新单页内容，适合局部文本变化，速度更快。 */
 void OLED_RefreshPage(u8 page)
 {
 	if (page >= 8U)
@@ -214,7 +222,7 @@ void OLED_RefreshPage(u8 page)
 	OLED_WritePageData(page);
 }
 
-/* Clear one page in RAM; caller decides when to push it to the panel. */
+/* 只清除某一页缓存，是否立刻刷屏由调用者决定。 */
 void OLED_ClearPage(u8 page)
 {
 	u8 x;
@@ -524,7 +532,14 @@ void OLED_ShowPicture(u8 x0,u8 y0,u8 x1,u8 y1,u8 BMP[])
 	 }
 }
 // OLED initialization sequence
-/* Initialize GPIO and then send the standard SSD1306 power-up sequence. */
+/*
+ * 初始化 OLED。
+ * 包括：
+ * 1. 配置模拟 I2C 引脚；
+ * 2. 复位显示屏；
+ * 3. 发送控制器初始化命令；
+ * 4. 清屏并刷新。
+ */
 void OLED_Init(void)
 {
 	GPIO_InitTypeDef GPIO_InitStructure = {0};

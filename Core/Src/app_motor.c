@@ -4,7 +4,14 @@
 #include "main.h"
 #include "tim.h"
 
-/* Motor control supports both open-loop PWM and a simple encoder PI loop. */
+/*
+ * 电机模块同时支持两种控制方式：
+ * 1. 开环：直接给左右轮输出 PWM 占空比；
+ * 2. 闭环：结合编码器反馈，按目标速度做 PI 调节。
+ *
+ * 上层通常不需要关心底层 PWM 细节，只要设置目标占空比
+ * 或目标速度，再周期性调用 AppMotor_Task() 即可。
+ */
 
 #define MOTOR_CONTROL_INTERVAL_MS 20U /* 闭环控制周期（ms） */
 #define MOTOR_MAX_TARGET_PPS 900       /* 目标速度上限（pulse per second） */
@@ -30,7 +37,11 @@ static int32_t s_right_duty_pm = 0;            /* 右轮当前输出占空比命
 static uint8_t s_left_no_feedback_count = 0U;  /* 左轮连续无反馈计数 */
 static uint8_t s_right_no_feedback_count = 0U; /* 右轮连续无反馈计数 */
 
-/* Shared saturation helper for duty, integral and other bounded values. */
+/* 
+ * 通用限幅函数。
+ * 用于限制积分项、占空比等数值，避免因为计算结果过大或过小
+ * 导致控制量失真，或者让电机出现不可预期的输出。
+ */
 static int32_t AppMotor_ClampI32(int32_t value, int32_t min_value, int32_t max_value)
 {
   if (value < min_value)
@@ -44,7 +55,15 @@ static int32_t AppMotor_ClampI32(int32_t value, int32_t min_value, int32_t max_v
   return value;       /* 在范围内原样返回 */
 }
 
-/* Reset PI state whenever the control mode or enable state changes. */
+/*
+ * 重置闭环控制内部状态。
+ * 常见触发时机：
+ * - 电机从禁用切换到启用；
+ * - 从开环切换到闭环，或反过来；
+ * - 保护逻辑触发后恢复。
+ *
+ * 这样做的目的是清掉历史积分和旧计数基准，避免控制输出突变。
+ */
 static void AppMotor_ResetLoopState(void)
 {
   AppEncoder_Counts_t counts = AppEncoder_GetCounts();
@@ -60,7 +79,12 @@ static void AppMotor_ResetLoopState(void)
   s_right_no_feedback_count = 0U;
 }
 
-/* STBY gates the driver chip, so disable must also clear internal state. */
+/*
+ * 控制电机驱动芯片的 STBY 引脚。
+ * enable = 1 时仅拉高 STBY，允许驱动输出；
+ * enable = 0 时除了关断驱动，还会同步清空目标速度、PWM 输出、
+ * PI 内部状态，确保停机后不会残留旧命令。
+ */
 void AppMotor_SetEnable(uint8_t enable)
 {
   if (enable != 0U)
@@ -76,7 +100,11 @@ void AppMotor_SetEnable(uint8_t enable)
   HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_RESET); /* 最后拉低 STBY 关断驱动 */
 }
 
-/* Both H-bridges are configured for the project's forward direction. */
+/*
+ * 设置左右电机为“前进方向”。
+ * 这里只配置 H 桥方向引脚，不直接输出速度；
+ * 真正的转速大小仍由 PWM 占空比决定。
+ */
 void AppMotor_SetForwardDirection(void)
 {
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);    /* A桥方向：前进 */
@@ -85,7 +113,11 @@ void AppMotor_SetForwardDirection(void)
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
 }
 
-/* Convert per-mille duty commands into timer compare values. */
+/*
+ * 将千分比形式的占空比转换为 TIM1 比较寄存器数值。
+ * 例如 duty = 500 表示 50% 占空比。
+ * 这样上层可以统一使用 0~1000 的整数范围，避免直接操作 CCR。
+ */
 void AppMotor_SetDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
 {
   uint32_t arr = (uint32_t)__HAL_TIM_GET_AUTORELOAD(&htim1);
@@ -113,21 +145,32 @@ void AppMotor_SetDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
 #endif
 }
 
-/* Changing loop mode resets history to avoid a sudden output jump. */
+/*
+ * 切换开环/闭环模式。
+ * 每次切模式都重置控制历史量，避免上一个模式留下的积分项或
+ * 计数基准影响当前模式，引起占空比突跳。
+ */
 void AppMotor_SetClosedLoop(uint8_t enable)
 {
   s_closed_loop_enable = (enable != 0U) ? 1U : 0U; /* 统一成 0/1 */
   AppMotor_ResetLoopState();                       /* 切模式后重置状态，避免突变 */
 }
 
-/* Targets are expressed directly in encoder pulses per second. */
+/*
+ * 直接按“编码器脉冲/秒”设置左右轮目标速度。
+ * 这个接口更适合做严格速度闭环控制。
+ */
 void AppMotor_SetTargetSpeed(int16_t left_pulse_per_sec, int16_t right_pulse_per_sec)
 {
   s_left_target_pps = left_pulse_per_sec;   /* 设置左轮目标速度 */
   s_right_target_pps = right_pulse_per_sec; /* 设置右轮目标速度 */
 }
 
-/* Reuse the closed-loop speed path by mapping duty to a speed target. */
+/*
+ * 把上层给出的左右轮目标占空比，映射成内部目标速度。
+ * 这样不管上层给的是“速度”还是“占空比”，最终都能复用同一套
+ * 闭环控制逻辑；若当前是开环模式，则直接输出 PWM。
+ */
 void AppMotor_SetTargetFromDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
 {
   if (duty_left_pm > 1000U)
@@ -148,7 +191,15 @@ void AppMotor_SetTargetFromDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
   }
 }
 
-/* Cooperative PI update driven from the main loop at a fixed interval. */
+/*
+ * 电机周期任务。
+ * 该函数需要在主循环中反复调用，它会按固定控制周期：
+ * 1. 读取编码器增量；
+ * 2. 估算当前速度；
+ * 3. 计算目标误差；
+ * 4. 更新 PI 输出；
+ * 5. 写回新的 PWM 占空比。
+ */
 void AppMotor_Task(uint32_t now_ms)
 {
   AppEncoder_Counts_t counts;

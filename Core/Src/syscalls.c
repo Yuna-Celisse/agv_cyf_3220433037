@@ -30,6 +30,12 @@
 #include <sys/time.h>
 #include <sys/times.h>
 
+/*
+ * 这个文件给 newlib / picolibc 提供最小系统调用实现。
+ * 在裸机单片机环境中，没有真正的操作系统，因此像 _write、_read、
+ * _sbrk 这类底层接口需要工程自己补齐，标准库函数才能正常工作。
+ */
+
 
 /* Variables */
 extern int __io_putchar(int ch) __attribute__((weak));
@@ -43,15 +49,18 @@ char **environ = __env;
 /* Functions */
 void initialise_monitor_handles()
 {
+  /* 半主机相关的占位函数，当前工程不额外处理。 */
 }
 
 int _getpid(void)
 {
+  /* 裸机环境没有真正进程概念，这里返回固定值即可。 */
   return 1;
 }
 
 int _kill(int pid, int sig)
 {
+  /* 裸机环境不支持进程信号，统一返回失败。 */
   (void)pid;
   (void)sig;
   errno = EINVAL;
@@ -60,12 +69,14 @@ int _kill(int pid, int sig)
 
 void _exit (int status)
 {
+  /* 程序退出在单片机场景中通常意味着停在死循环里。 */
   _kill(status, -1);
   while (1) {}    /* Make sure we hang here */
 }
 
 __attribute__((weak)) int _read(int file, char *ptr, int len)
 {
+  /* 把标准输入重定向到用户实现的 __io_getchar()。 */
   (void)file;
   int DataIdx;
 
@@ -79,6 +90,7 @@ __attribute__((weak)) int _read(int file, char *ptr, int len)
 
 __attribute__((weak)) int _write(int file, char *ptr, int len)
 {
+  /* 把标准输出重定向到用户实现的 __io_putchar()。 */
   (void)file;
   int DataIdx;
 
@@ -187,6 +199,7 @@ int _execve(char *name, char **argv, char **env)
  */
 static int starm_putc(char c, FILE *file)
 {
+	/* Picolibc 的字符输出桥接函数。 */
 	(void) file;
   __io_putchar(c);
 	return c;
@@ -200,6 +213,7 @@ static int starm_putc(char c, FILE *file)
  */
 static int starm_getc(FILE *file)
 {
+	/* Picolibc 的字符输入桥接函数。 */
 	unsigned char c;
 	(void) file;
   c = __io_getchar();

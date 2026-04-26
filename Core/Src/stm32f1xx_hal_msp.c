@@ -20,7 +20,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 /* USER CODE BEGIN Includes */
-/* Global MSP init only enables core clocks and pin remapping. */
+/*
+ * MSP（MCU Support Package）初始化属于更底层的芯片支持代码。
+ * 这里主要完成系统级时钟打开、调试口重映射等“全局一次性配置”。
+ */
 
 /* USER CODE END Includes */
 
@@ -62,7 +65,10 @@
   */
 void HAL_MspInit(void)
 {
-  /* Enable AFIO/PWR and free JTAG pins while keeping SWD available. */
+  /*
+   * 打开 AFIO / PWR 时钟，并关闭 JTAG 保留 SWD。
+   * 这样可以释放部分调试复用引脚给普通 GPIO 或外设继续使用。
+   */
 
   /* USER CODE BEGIN MspInit 0 */
 

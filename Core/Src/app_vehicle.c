@@ -14,7 +14,12 @@
 
 #include <stdio.h>
 
-/* This module owns the full vehicle mission state machine. */
+/*
+ * 这是整车的核心调度模块。
+ * 它把 RFID、循迹、超声波避障、舵机取放、OLED 显示、电机驱动
+ * 这些能力统一组织成一个有限状态机，让主循环只需要调用
+ * AppVehicle_Task() 就能驱动整车完整运行。
+ */
 
 #define ENABLE_RFID_UART_REPORT 0U
 #define ENABLE_ULTRASONIC_UART_REPORT 1U
@@ -105,7 +110,10 @@ static uint32_t s_state_start_tick = 0U;
 static uint32_t s_stop_start_tick = 0U;
 static uint32_t s_last_encoder_report_tick = 0U;
 
-/* Only movement states should treat bad ultrasonic data as a fault. */
+/*
+ * 只有在车辆真正运动时，超声波连续异常才应该被视为故障。
+ * 如果当前只是待机、刷卡或停止状态，传感器偶尔无效不需要升级成故障。
+ */
 static uint8_t AppVehicle_IsUltrasonicMotionState(VehicleState_t state)
 {
   return (uint8_t)((state == VEHICLE_LINE_FOLLOW) ||
@@ -116,13 +124,13 @@ static uint8_t AppVehicle_IsUltrasonicMotionState(VehicleState_t state)
                    (state == VEHICLE_AVOID_RETURN_FORWARD));
 }
 
-/* Repeated invalid readings are treated as a sensor fault condition. */
+/* 连续多次拿不到有效距离时，认为超声波当前不可靠。 */
 static uint8_t AppVehicle_IsUltrasonicFaulted(void)
 {
   return (uint8_t)(s_ultrasonic_invalid_count >= HCSR04_INVALID_STOP_COUNT);
 }
 
-/* Clear filtered distance history and fault counters together. */
+/* 清空超声波历史距离、突变过滤计数和无效结果计数。 */
 static void AppVehicle_ResetUltrasonicState(void)
 {
   s_last_distance_cm = 0U;
@@ -131,7 +139,10 @@ static void AppVehicle_ResetUltrasonicState(void)
   s_ultrasonic_invalid_count = 0U;
 }
 
-/* Reset line-crossing bookkeeping whenever a mission phase changes. */
+/*
+ * 清空循迹相关状态。
+ * 包括已经过了几条线、是否处于整条黑线锁存状态、避障后回线计数等。
+ */
 static void AppVehicle_ResetLineTracking(void)
 {
   s_crossed_line_count = 0U;
@@ -143,27 +154,33 @@ static void AppVehicle_ResetLineTracking(void)
   s_stop_is_final = 0U;
 }
 
-/* Central helper so every stop path disables the same hardware outputs. */
+/* 统一的停车动作，保证所有停止路径都走相同的底层控制。 */
 static void AppVehicle_StopMotion(void)
 {
   AppMotor_SetEnable(0U);
   AppMotor_SetDuty(0U, 0U);
 }
 
-/* A short recovery window relaxes steering after obstacle avoidance. */
+/*
+ * 避障回到主线后，给一个短暂的“恢复窗口”。
+ * 在这段时间内允许循迹控制更保守一些，避免刚回线时转向过猛。
+ */
 static uint8_t AppVehicle_IsLineRecovering(uint32_t now)
 {
   return (uint8_t)((int32_t)(s_line_recover_until_tick - now) > 0);
 }
 
-/* Avoidance temporarily owns the status line on the OLED. */
+/* 避障过程中临时占用 OLED 的状态行，提示当前避障阶段。 */
 static void AppVehicle_ShowAvoidStatus(const uint8_t *text, uint8_t len)
 {
   AppOled_ShowStatus(text, len);
   s_oled_showing_avoid = 1U;
 }
 
-/* Periodic encoder reporting is useful when tuning drive behavior. */
+/*
+ * 定期通过串口上报码盘计数。
+ * 主要用于调试电机、验证左右轮一致性，以及辅助闭环参数整定。
+ */
 static void AppVehicle_ReportEncoderCounts(uint32_t now)
 {
 #if ENABLE_ENCODER_UART_REPORT
@@ -192,7 +209,7 @@ static void AppVehicle_ReportEncoderCounts(uint32_t now)
 #endif
 }
 
-/* Restore the destination label after temporary warning/status text. */
+/* 避障文字显示结束后，把 OLED 恢复成目标站点信息。 */
 static void AppVehicle_RestoreTargetStatus(void)
 {
   if (s_oled_showing_avoid != 0U)
@@ -202,7 +219,10 @@ static void AppVehicle_RestoreTargetStatus(void)
   }
 }
 
-/* Differential duty makes the robot pivot while still creeping forward. */
+/*
+ * 通过左右轮不同占空比实现转向。
+ * 一侧快、一侧慢，车辆就会边前进边偏转。
+ */
 static void AppVehicle_SetAvoidTurn(uint8_t turn_left, uint16_t fast_pm, uint16_t slow_pm)
 {
   if (turn_left != 0U)
@@ -215,7 +235,11 @@ static void AppVehicle_SetAvoidTurn(uint8_t turn_left, uint16_t fast_pm, uint16_
   }
 }
 
-/* A valid RFID card selects the stop line and arms the whole mission. */
+/*
+ * 刷到有效 RFID 卡后启动任务。
+ * A 卡对应第 1 条目标线，B 卡对应第 2 条目标线；
+ * 到达目标线后停车取货，之后继续前往最终停靠线。
+ */
 static void AppVehicle_StartMission(uint8_t card_id)
 {
   if ((card_id != CARD_ID_A) && (card_id != CARD_ID_B))
@@ -241,7 +265,10 @@ static void AppVehicle_StartMission(uint8_t card_id)
   s_oled_showing_avoid = 0U;
 }
 
-/* Return the robot to the idle state without power-cycling the board. */
+/*
+ * 任务结束或异常恢复后，回到待刷卡初始状态。
+ * 这个过程不需要重启单片机，只重置任务上下文即可。
+ */
 static void AppVehicle_ResetMission(void)
 {
   s_vehicle_state = VEHICLE_WAIT_CARD;
@@ -260,7 +287,11 @@ static void AppVehicle_ResetMission(void)
   AppOled_ClearAction();
 }
 
-/* Poll RFID only while idle so motion timing stays predictable. */
+/*
+ * 仅在待机状态轮询 RFID。
+ * 这样可以避免车辆运动过程中还频繁读卡，影响主流程时序，
+ * 也能防止途中误刷卡打断当前任务。
+ */
 static void AppVehicle_ProcessRfid(uint32_t now)
 {
 #if ENABLE_NON_MOTION_FEATURES && ENABLE_RFID_FEATURES
@@ -290,7 +321,12 @@ static void AppVehicle_ProcessRfid(uint32_t now)
 #endif
 }
 
-/* Filter spikes and maintain a last-known-good distance estimate. */
+/*
+ * 处理一次超声波结果，并做简单滤波。
+ * 主要处理两类情况：
+ * 1. 距离瞬间跳变过大，先尝试认为是异常值；
+ * 2. 连续多次没有有效结果，则累计故障计数。
+ */
 static void AppVehicle_ProcessUltrasonicResult(void)
 {
   uint16_t distance_cm;
@@ -363,7 +399,10 @@ static void AppVehicle_ProcessUltrasonicResult(void)
   }
 }
 
-/* Drive the ultrasonic sensor cooperatively from the main loop. */
+/*
+ * 在主循环中轮询式驱动超声波模块。
+ * 这里既负责推动一次次测量，也负责取回结果并更新整车状态。
+ */
 static void AppVehicle_PollUltrasonic(uint32_t now)
 {
   uint32_t ultrasonic_interval_ms = HCSR04_MEASURE_INTERVAL_MS;
@@ -392,7 +431,13 @@ static void AppVehicle_PollUltrasonic(uint32_t now)
   }
 }
 
-/* Follow the line, watch for obstacles and count full-line crossings. */
+/*
+ * 车辆主运行状态：循迹前进。
+ * 这一状态下要同时做三件事：
+ * 1. 根据红外循迹误差调整左右轮速度；
+ * 2. 根据超声波距离判断是否进入避障；
+ * 3. 统计整条黑线穿越次数，决定是否到站停车。
+ */
 static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
 {
   uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
@@ -521,7 +566,11 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
   AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
 }
 
-/* Shared stop handler for pickup and final arrival stages. */
+/*
+ * 车辆停车状态。
+ * 这里既承担“到目标点取货”的停车逻辑，
+ * 也承担“到最终终点结束任务”的停车逻辑。
+ */
 static void AppVehicle_RunStopping(uint32_t now)
 {
   uint32_t elapsed = now - s_stop_start_tick;
@@ -560,7 +609,10 @@ static void AppVehicle_RunStopping(uint32_t now)
   AppServo_SetAngle(SERVO_STOP_END_ANGLE_DEG);
 }
 
-/* Final avoidance stage searches for the line and rejoins it smoothly. */
+/*
+ * 避障流程的最后阶段：向右搜索主线并重新并入循迹路径。
+ * 如果探头重新看到边缘线，说明差不多已经回到轨道附近。
+ */
 static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
 {
   uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
@@ -596,7 +648,15 @@ static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
   }
 }
 
-/* Main mission state machine: idle, follow line, stop, avoid obstacle. */
+/*
+ * 整车状态机总入口。
+ * 所有高层行为都从这里切换，包括：
+ * - 待刷卡
+ * - 刷卡后等待出发
+ * - 正常循迹
+ * - 到站停车
+ * - 超声波避障的多个子阶段
+ */
 static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
 {
   switch (s_vehicle_state)
@@ -685,7 +745,11 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
   }
 }
 
-/* Initialize hardware-facing modules in the order the app depends on them. */
+/*
+ * 初始化整车所依赖的所有模块。
+ * 顺序上先初始化底层传感/执行模块，再初始化显示与任务上下文，
+ * 最后把整车状态重置到待刷卡状态。
+ */
 void AppVehicle_Init(void)
 {
   AppEncoder_Init();
@@ -721,7 +785,11 @@ void AppVehicle_Init(void)
   AppVehicle_ResetMission();
 }
 
-/* Single cooperative task called forever from main(). */
+/*
+ * 整车任务入口。
+ * 每次被主循环调用时，都会读取当前时间和传感器状态，
+ * 然后依次推进串口调试、RFID、超声波、状态机和电机控制。
+ */
 void AppVehicle_Task(void)
 {
   uint32_t now = HAL_GetTick();

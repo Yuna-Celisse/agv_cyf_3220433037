@@ -22,7 +22,11 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-/* ISRs are intentionally thin and forward work into HAL or app callbacks. */
+/*
+ * 本文件只保留“薄中断”逻辑：
+ * 中断服务函数尽量不做复杂业务，只做 HAL 转发或进入上层回调，
+ * 避免中断里处理过重影响系统实时性。
+ */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -183,7 +187,7 @@ void PendSV_Handler(void)
   */
 void SysTick_Handler(void)
 {
-  /* Keep the HAL tick updated for delay and scheduler-style timing code. */
+  /* SysTick 是全局时基，HAL_Delay 和大量轮询定时逻辑都依赖它。 */
   /* USER CODE BEGIN SysTick_IRQn 0 */
 
   /* USER CODE END SysTick_IRQn 0 */
@@ -205,7 +209,7 @@ void SysTick_Handler(void)
   */
 void EXTI1_IRQHandler(void)
 {
-  /* EXTI1 is currently shared by the ultrasonic ECHO pin. */
+  /* EXTI1 当前用于超声波 ECHO 回波引脚，交给 HAL 后会回调到业务层。 */
   /* USER CODE BEGIN EXTI1_IRQn 0 */
 
   /* USER CODE END EXTI1_IRQn 0 */
@@ -220,7 +224,7 @@ void EXTI1_IRQHandler(void)
   */
 void EXTI15_10_IRQHandler(void)
 {
-  /* EXTI15_10 currently serves both wheel encoder A-phase inputs. */
+  /* EXTI15_10 当前主要服务两个编码器 A 相输入，所以要分别处理多个引脚。 */
   /* USER CODE BEGIN EXTI15_10_IRQn 0 */
 
   /* USER CODE END EXTI15_10_IRQn 0 */
@@ -236,7 +240,7 @@ void EXTI15_10_IRQHandler(void)
   */
 void USART3_IRQHandler(void)
 {
-  /* Forward serial IRQ handling into the HAL driver. */
+  /* 串口中断统一转交 HAL 处理，后续再由 HAL 进入用户回调链。 */
   /* USER CODE BEGIN USART3_IRQn 0 */
 
   /* USER CODE END USART3_IRQn 0 */

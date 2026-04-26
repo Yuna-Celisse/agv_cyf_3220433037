@@ -1,10 +1,14 @@
 #include "app_line.h"
 
-/* Line sensors are read as a 5-bit mask and converted into a tracking error. */
+/*
+ * 循迹红外模块负责两件事：
+ * 1. 读取 5 路红外探头状态；
+ * 2. 把探头命中情况转换成一个可用于转向控制的误差值。
+ */
 
 #define APP_LINE_IR_ACTIVE_LOW 1U /* 红外巡线传感器是否低电平有效：1=低有效，0=高有效 */
 
-/* Pack IR1..IR5 into bit0..bit4 for later processing. */
+/* 把 IR1~IR5 当前电平打包成一个 5 位掩码，方便后续统一处理。 */
 uint8_t AppLine_ReadMask(void)
 {
   uint8_t mask = 0U; /* 5路红外状态位图，bit0~bit4 对应 IR1~IR5 */
@@ -33,7 +37,7 @@ uint8_t AppLine_ReadMask(void)
   return mask; /* 返回原始电平位图 */
 }
 
-/* Convert raw electrical level into a logical "line detected" bit mask. */
+/* 把原始电平统一转换成“1 表示检测到黑线”的逻辑语义。 */
 uint8_t AppLine_NormalizeMask(uint8_t raw_mask)
 {
 #if APP_LINE_IR_ACTIVE_LOW
@@ -43,7 +47,10 @@ uint8_t AppLine_NormalizeMask(uint8_t raw_mask)
 #endif
 }
 
-/* Compute a weighted average error without floating-point math. */
+/*
+ * 根据命中的探头位置计算横向误差。
+ * 使用加权平均而不是浮点运算，既直观又适合单片机环境。
+ */
 uint8_t AppLine_ComputeErrorX10(uint8_t raw_mask, int16_t *error_x10)
 {
   uint8_t mask;

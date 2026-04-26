@@ -20,7 +20,12 @@
 /* Includes ------------------------------------------------------------------*/
 #include "tim.h"
 
-/* TIM1 drives motors, TIM2 provides us timing, TIM4 drives the servo. */
+/*
+ * 本工程一共用到 3 个定时器：
+ * 1. TIM1：输出左右电机 PWM；
+ * 2. TIM2：作为 1us 计数基准，服务超声波测距；
+ * 3. TIM4：输出舵机控制 PWM。
+ */
 
 /* USER CODE BEGIN 0 */
 
@@ -31,7 +36,11 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 
 /* TIM1 init function */
-/* PWM base for left/right motor duty output. */
+/*
+ * TIM1 用于电机 PWM。
+ * 预分频后得到 1MHz 计数频率，周期 1000，因此 PWM 周期约 1ms，
+ * 上层可以方便地使用 0~1000 的千分比占空比。
+ */
 void MX_TIM1_Init(void)
 {
 
@@ -106,7 +115,10 @@ void MX_TIM1_Init(void)
 
 }
 /* TIM2 init function */
-/* Free-running 1 MHz timer used for ultrasonic microsecond timing. */
+/*
+ * TIM2 不输出 PWM，而是作为自由运行计数器使用。
+ * 计数频率配置为 1MHz，这样计数器每加 1 就表示 1us。
+ */
 void MX_TIM2_Init(void)
 {
 
@@ -148,7 +160,11 @@ void MX_TIM2_Init(void)
 }
 
 /* TIM4 init function */
-/* 20 ms PWM period for the servo control signal. */
+/*
+ * TIM4 用于舵机 PWM。
+ * 周期配置为 20000 个 1us 计数，也就是 20ms，
+ * 正好符合常见舵机控制信号规范。
+ */
 void MX_TIM4_Init(void)
 {
 
@@ -203,7 +219,10 @@ void MX_TIM4_Init(void)
 
 }
 
-/* Enable peripheral clocks before the timers are started elsewhere. */
+/*
+ * 这些 MSP 初始化函数只负责打开对应定时器时钟。
+ * 真正的参数配置在 MX_TIMx_Init() 里完成，真正启动在上层业务模块里完成。
+ */
 void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
 {
 
@@ -241,7 +260,10 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
   /* USER CODE END TIM4_MspInit 1 */
   }
 }
-/* Configure timer output pins after the timer core is initialized. */
+/*
+ * 定时器本体初始化完成后，再把复用输出引脚配置出来。
+ * 这样 TIM1/TIM4 才能把 PWM 波形真正输出到外部引脚。
+ */
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
 {
 
@@ -289,6 +311,7 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
 
 void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
 {
+  /* 去初始化时仅关闭对应外设时钟，通常调试或反初始化场景才会用到。 */
 
   if(tim_baseHandle->Instance==TIM1)
   {

@@ -27,7 +27,15 @@
 #include "app_encoder.h"
 #include "app_ultrasonic.h"
 #include "app_vehicle.h"
-/* Main only performs board startup and then hands control to AppVehicle. */
+/* 
+ * main.c 的职责很单一：
+ * 1. 完成 HAL、时钟和基础外设初始化；
+ * 2. 初始化上层整车应用模块；
+ * 3. 在死循环中反复调用 AppVehicle_Task()。
+ * 
+ * 也就是说，真正的业务逻辑不写在 main 里，而是统一交给
+ * app_vehicle 模块调度，这样后续维护状态机时更集中。
+ */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,23 +70,34 @@ void SystemClock_Config(void);
   */
 int main(void)
 {
-  /* Initialize HAL and the system clock before touching peripherals. */
+  /* 
+   * 先初始化 HAL 和系统时钟。
+   * HAL_Init() 会初始化 SysTick 等基础环境；
+   * SystemClock_Config() 决定 MCU 后续运行频率。
+   */
   HAL_Init();
   SystemClock_Config();
 
-  /* Bring up the CubeMX-generated peripheral drivers used by the app layer. */
+  /* 
+   * 初始化本工程用到的底层外设。
+   * 这些函数由 CubeMX 生成，负责把 GPIO、定时器、串口配置到可用状态。
+   */
   MX_GPIO_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
   MX_TIM4_Init();
   MX_USART3_UART_Init();
 
-  /* Initialize the high-level vehicle application state machine. */
+  /* 初始化整车应用层，包括状态机、传感器和执行器的上层封装。 */
   AppVehicle_Init();
 
   while (1)
   {
-    /* Run the cooperative main loop forever. */
+    /* 
+     * 主循环采用“协作式轮询”模型：
+     * 不开 RTOS，不做任务切换，而是不断调用统一任务入口，
+     * 由 AppVehicle_Task() 在内部决定当前时刻该处理什么。
+     */
     AppVehicle_Task();
   }
 }
@@ -92,7 +111,10 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /* Use external HSE + PLL to run the MCU at 72 MHz. */
+  /* 
+   * 使用外部高速晶振 HSE，经 PLL 倍频后得到 72MHz 系统主频。
+   * 这是 STM32F103 常见的运行配置，兼顾性能和外设时序。
+   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
@@ -121,7 +143,12 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  /* Dispatch shared EXTI callbacks to the modules that own those pins. */
+  /* 
+   * HAL 会在任意 EXTI 引脚中断触发后回调这里。
+   * 这里不直接写业务，而是按模块分发：
+   * - 超声波模块处理 ECHO 回波边沿
+   * - 编码器模块处理 AB 相中的 A 相边沿
+   */
   AppUltrasonic_HandleEchoExti(GPIO_Pin);
   AppEncoder_HandleExti(GPIO_Pin);
 }

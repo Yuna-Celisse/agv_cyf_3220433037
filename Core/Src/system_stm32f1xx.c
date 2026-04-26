@@ -57,6 +57,17 @@
 
 #include "stm32f1xx.h"
 
+/*
+ * 这是 CMSIS 提供的系统文件，不属于业务逻辑层。
+ * 它的主要职责是：
+ * 1. 提供 SystemInit()，在复位后、进入 main() 之前执行基础系统设置；
+ * 2. 维护 SystemCoreClock，表示当前内核主频；
+ * 3. 提供 SystemCoreClockUpdate()，在时钟变化后重新计算主频。
+ *
+ * 一般情况下这个文件不需要频繁修改，除非项目涉及向量表重定位、
+ * 外部 SRAM 或自定义时钟底层初始化。
+ */
+
 /**
   * @}
   */
@@ -174,6 +185,10 @@ const uint8_t APBPrescTable[8U] =  {0, 0, 0, 0, 1, 2, 3, 4};
   */
 void SystemInit (void)
 {
+  /* 
+   * 该函数在启动文件中被调用，早于 main() 执行。
+   * 本工程默认只处理必要的系统级初始化和可选的向量表重定位。
+   */
 #if defined(STM32F100xE) || defined(STM32F101xE) || defined(STM32F101xG) || defined(STM32F103xE) || defined(STM32F103xG)
   #ifdef DATA_IN_ExtSRAM
     SystemInit_ExtMemCtl(); 
@@ -223,6 +238,10 @@ void SystemInit (void)
   */
 void SystemCoreClockUpdate (void)
 {
+  /*
+   * 根据 RCC 当前寄存器配置重新推导 SystemCoreClock 的值。
+   * 当系统时钟源、分频或 PLL 参数改变后，应调用该函数同步更新。
+   */
   uint32_t tmp = 0U, pllmull = 0U, pllsource = 0U;
 
 #if defined(STM32F105xC) || defined(STM32F107xC)

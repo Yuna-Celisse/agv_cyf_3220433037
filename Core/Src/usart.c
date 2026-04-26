@@ -20,7 +20,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "usart.h"
 
-/* USART3 is used as the serial debug and telemetry channel. */
+/*
+ * 串口模块当前只使用 USART3。
+ * 它承担调试打印、传感器上报、编码器计数输出等文本通信功能。
+ */
 
 /* USER CODE BEGIN 0 */
 
@@ -30,7 +33,10 @@ UART_HandleTypeDef huart3;
 
 /* USART3 init function */
 
-/* Standard 115200-8-N-1 configuration for logs and text reports. */
+/*
+ * 配置 USART3 为常用的 115200 / 8N1。
+ * 这是最常见的串口调试参数，方便直接接串口助手观察输出。
+ */
 void MX_USART3_UART_Init(void)
 {
 
@@ -59,7 +65,12 @@ void MX_USART3_UART_Init(void)
 
 }
 
-/* Configure the GPIO pins and IRQ used by USART3. */
+/*
+ * USART3 的 MSP 初始化负责三件事：
+ * 1. 打开 USART3 外设时钟；
+ * 2. 配置 TX/RX 引脚；
+ * 3. 打开串口中断。
+ */
 void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 {
 
@@ -98,6 +109,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
 void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 {
+  /* 串口反初始化时，释放 GPIO 并关闭对应中断和外设时钟。 */
 
   if(uartHandle->Instance==USART3)
   {

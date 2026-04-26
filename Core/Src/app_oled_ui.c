@@ -3,7 +3,11 @@
 #include "oled.h"
 #include "usart.h"
 
-/* This wrapper keeps OLED text updates small, cached and app-focused. */
+/*
+ * 这是 OLED 显示的业务封装层。
+ * 它不关心底层像素怎么画，只负责把“刷卡提示、目标点、距离、动作状态”
+ * 这些应用层信息整理成文本并显示出来。
+ */
 
 #define APP_OLED_TEXT_X_OFFSET 16U
 #define APP_OLED_LINE_LEN 16U
@@ -16,7 +20,7 @@ static uint8_t oled_last_rfid_line[APP_OLED_LINE_BUF_LEN] = {0};
 static uint8_t oled_action_line[APP_OLED_LINE_BUF_LEN] = {0};
 static uint8_t oled_last_action_line[APP_OLED_LINE_BUF_LEN] = {0};
 
-/* Small helper for rendering RFID UID bytes as uppercase hex. */
+/* 把 0~15 的数值转换成大写十六进制字符。 */
 static char AppOled_HexDigit(uint8_t value)
 {
   if (value < 10U)
@@ -27,7 +31,7 @@ static char AppOled_HexDigit(uint8_t value)
   return (char)('A' + (value - 10U));
 }
 
-/* UART is used here as a lightweight debug/reporting channel. */
+/* 某些显示信息会顺便通过串口输出，方便没有屏幕时调试。 */
 static void AppOled_SendAsync(const uint8_t *data, uint16_t len)
 {
   if ((data == 0) || (len == 0U))
@@ -38,7 +42,7 @@ static void AppOled_SendAsync(const uint8_t *data, uint16_t len)
   (void)HAL_UART_Transmit(&huart3, (uint8_t *)data, len, 20U);
 }
 
-/* Copy text into a fixed-width line buffer and keep it NUL-terminated. */
+/* 把任意长度文本整理到固定行缓冲区，并保证字符串正常结束。 */
 static void AppOled_LoadLine(uint8_t *dst, const uint8_t *line, uint8_t len)
 {
   uint8_t i;
@@ -92,7 +96,7 @@ static void AppOled_RefreshActionLine(void)
   OLED_RefreshPage(5U);
 }
 
-/* Refresh the OLED only when a line really changed to reduce flicker. */
+/* 只有当某一行内容真的变化时才刷新 OLED，减少闪烁和重复写屏。 */
 static void AppOled_UpdateCachedLine(uint8_t *current, uint8_t *last, void (*refresh_fn)(void))
 {
   uint8_t i;
@@ -111,7 +115,7 @@ static void AppOled_UpdateCachedLine(uint8_t *current, uint8_t *last, void (*ref
   }
 }
 
-/* Show the UID on OLED and optionally mirror it to the UART console. */
+/* 显示刷到的 UID，并可选地通过串口同步输出。 */
 void AppOled_ShowUid(const uint8_t uid[4], uint8_t uart_report_enable)
 {
   uint8_t i;
@@ -145,7 +149,7 @@ void AppOled_ShowUid(const uint8_t uid[4], uint8_t uart_report_enable)
   }
 }
 
-/* Default idle UI while waiting for a valid RFID card. */
+/* 待机界面：提示用户刷卡，并清空动作行。 */
 void AppOled_ShowSwipePrompt(void)
 {
   AppOled_LoadLine(oled_line, (const uint8_t *)"SWIPE CARD", 10U);
@@ -156,7 +160,7 @@ void AppOled_ShowSwipePrompt(void)
   AppOled_UpdateCachedLine(oled_action_line, oled_last_action_line, AppOled_RefreshActionLine);
 }
 
-/* Update only the destination line after the mission target changes. */
+/* 根据当前目标卡片更新“目标站点”这一行文本。 */
 void AppOled_ShowTarget(uint8_t card_id)
 {
   if (card_id == APP_CARD_ID_A)
@@ -175,7 +179,7 @@ void AppOled_ShowTarget(uint8_t card_id)
   AppOled_UpdateCachedLine(oled_rfid_line, oled_last_rfid_line, AppOled_RefreshRfidLine);
 }
 
-/* Keep ultrasonic distance formatting simple and fixed-width. */
+/* 把超声波距离格式化成固定宽度文本，便于 OLED 稳定显示。 */
 void AppOled_ShowDistance(uint8_t has_distance, uint16_t distance_cm)
 {
   uint8_t line_buf[] = "US:---cm";

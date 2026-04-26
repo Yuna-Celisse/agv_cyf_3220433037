@@ -4,7 +4,11 @@
 #include "tim.h"
 #include "usart.h"
 
-/* HC-SR04 timing uses TIM2 as a 1 us free-running counter. */
+/*
+ * 超声波模块基于 HC-SR04 工作。
+ * TIM2 被配置成 1MHz 计数器，因此计数值每增加 1 就表示 1us，
+ * 这样可以方便地完成触发脉冲延时和 ECHO 脉宽测量。
+ */
 
 #define APP_HCSR04_TIMEOUT_MS 35U        /* 一次测量的超时时间（ms） */
 #define APP_HCSR04_CM_PER_US_DIVISOR 58U /* 回波脉宽换算厘米的除数（经验值） */
@@ -20,7 +24,11 @@ static volatile uint32_t hcsr04_trigger_tick = 0U; /* 触发测量时刻（ms）
 static volatile uint8_t hcsr04_timeout_flag = 0U;  /* 本次测量是否超时 */
 static uint8_t app_us_uart_report_enable = 0U;     /* 串口打印开关 */
 
-/* Busy-wait on TIM2 so trigger timing stays in the microsecond range. */
+/*
+ * 基于 TIM2 的忙等待微秒延时。
+ * 由于 HC-SR04 的 TRIG 脉冲要求是 10us 级别，这里不能只靠
+ * HAL_Delay() 这样的毫秒级延时函数。
+ */
 static void AppUltrasonic_DelayUs(uint16_t us)
 {
   uint16_t start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2); /* 记录起始计数 */
@@ -31,7 +39,10 @@ static void AppUltrasonic_DelayUs(uint16_t us)
   }
 }
 
-/* Optional UART report for tuning and debugging sensor behavior. */
+/*
+ * 通过串口输出当前测得的距离，方便上位机调试和现场观察。
+ * 这个输出是可选的，由初始化时的 uart_report_enable 决定。
+ */
 static void AppUltrasonic_SendDistance(uint16_t distance_cm)
 {
   uint8_t tx_buf[] = "US:000cm\r\n";
@@ -53,7 +64,10 @@ static void AppUltrasonic_SendDistance(uint16_t distance_cm)
   (void)HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 20U); /* 发送距离文本 */
 }
 
-/* Emit a readable failure message when the echo is missing or invalid. */
+/*
+ * 当本次测量没有得到有效回波时，输出统一的调试文本。
+ * 便于区分“测到很远”和“根本没测到”的情况。
+ */
 static void AppUltrasonic_SendNoEcho(void)
 {
   uint8_t tx_buf[] = "US:NONE\r\n";
@@ -66,7 +80,11 @@ static void AppUltrasonic_SendNoEcho(void)
   (void)HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 20U); /* 发送无回波文本 */
 }
 
-/* TRIG is a GPIO output, ECHO is captured with a dual-edge EXTI pin. */
+/*
+ * 初始化 HC-SR04 的两个关键引脚：
+ * - TRIG：普通推挽输出，用来发送启动测距脉冲；
+ * - ECHO：双边沿外部中断输入，用来记录高电平脉宽。
+ */
 void AppUltrasonic_Init(uint8_t uart_report_enable)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -91,7 +109,11 @@ void AppUltrasonic_Init(uint8_t uart_report_enable)
   HAL_NVIC_EnableIRQ(EXTI1_IRQn);           /* 使能 EXTI1 中断 */
 }
 
-/* Generate the 10 us trigger pulse required by the HC-SR04. */
+/*
+ * 发起一次超声波测量。
+ * 过程是先拉低 TRIG，再给一个 10us 的高电平脉冲，
+ * 同时记录触发时刻，供后续超时判断使用。
+ */
 void AppUltrasonic_StartMeasure(void)
 {
   if (hcsr04_busy != 0U)
@@ -111,7 +133,11 @@ void AppUltrasonic_StartMeasure(void)
   hcsr04_trigger_tick = HAL_GetTick(); /* 记录触发时刻用于超时判断 */
 }
 
-/* Timeout recovery keeps the state machine from waiting forever. */
+/*
+ * 超时维护任务。
+ * 如果超过限定时间还没有等到完整回波，说明本次测量失败，
+ * 需要主动结束 busy 状态，避免上层一直卡在等待结果。
+ */
 void AppUltrasonic_Task(uint32_t now_ms)
 {
   if ((hcsr04_busy != 0U) && ((now_ms - hcsr04_trigger_tick) >= APP_HCSR04_TIMEOUT_MS))
@@ -121,7 +147,11 @@ void AppUltrasonic_Task(uint32_t now_ms)
   }
 }
 
-/* Rising edge stores the start time, falling edge closes the pulse width. */
+/*
+ * ECHO 引脚的中断处理函数。
+ * - 上升沿：表示回波脉冲开始，记录起始计数值；
+ * - 下降沿：表示回波脉冲结束，计算整个高电平持续时间。
+ */
 void AppUltrasonic_HandleEchoExti(uint16_t gpio_pin)
 {
   if (gpio_pin != HCSR04_ECHO_Pin)
@@ -157,7 +187,13 @@ uint8_t AppUltrasonic_IsBusy(void)
   return hcsr04_busy; /* 返回测量忙状态 */
 }
 
-/* Consume exactly one completed measurement or timeout event per call. */
+/*
+ * 取走一次测量结果。
+ * 这个接口具有“消费型”语义：
+ * - 如果有新结果，只返回一次；
+ * - 结果被上层取走后，对应标志位会被清除。
+ * 这样可以避免同一条数据被重复处理。
+ */
 uint8_t AppUltrasonic_FetchResult(uint16_t *distance_cm, uint8_t *has_distance)
 {
   uint16_t pulse_width_us;

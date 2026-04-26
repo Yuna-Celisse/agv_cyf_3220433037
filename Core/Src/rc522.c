@@ -2,7 +2,13 @@
 
 #include "main.h"
 
-/* RC522 access is implemented with software SPI over GPIO pins. */
+/*
+ * RC522 底层驱动采用 GPIO 模拟 SPI 的方式访问寄存器。
+ * 这一层不直接处理整车任务，只负责：
+ * - 读写 RC522 寄存器
+ * - 发送寻卡、防冲撞、停止等基础命令
+ * - 返回 UID 等底层数据
+ */
 
 #define RC522_STATUS_OK      0U
 #define RC522_STATUS_NOTAG   1U
@@ -42,7 +48,7 @@
 
 #define RC522_MAX_LEN           16U
 
-/* Short GPIO timing gap used by the bit-banged SPI transactions. */
+/* 软件 SPI 每个时钟边沿之间留出少量延时，保证 RC522 能稳定采样。 */
 static void RC522_SpiDelay(void)
 {
   __NOP();
@@ -51,37 +57,37 @@ static void RC522_SpiDelay(void)
   __NOP();
 }
 
-/* Select the RC522 before each register access. */
+/* 片选拉低，开始一次 RC522 通信。 */
 static void RC522_CsLow(void)
 {
   HAL_GPIO_WritePin(RC522_SDA_GPIO_Port, RC522_SDA_Pin, GPIO_PIN_RESET);
 }
 
-/* Release the RC522 after each register access. */
+/* 片选拉高，结束一次 RC522 通信。 */
 static void RC522_CsHigh(void)
 {
   HAL_GPIO_WritePin(RC522_SDA_GPIO_Port, RC522_SDA_Pin, GPIO_PIN_SET);
 }
 
-/* Drive the software SPI clock low. */
+/* 软件 SPI 时钟线拉低。 */
 static void RC522_SckLow(void)
 {
   HAL_GPIO_WritePin(RC522_SCK_GPIO_Port, RC522_SCK_Pin, GPIO_PIN_RESET);
 }
 
-/* Drive the software SPI clock high. */
+/* 软件 SPI 时钟线拉高。 */
 static void RC522_SckHigh(void)
 {
   HAL_GPIO_WritePin(RC522_SCK_GPIO_Port, RC522_SCK_Pin, GPIO_PIN_SET);
 }
 
-/* Output one logic level on the software SPI MOSI pin. */
+/* 向 MOSI 引脚输出 0/1 电平。 */
 static void RC522_MosiWrite(uint8_t value)
 {
   HAL_GPIO_WritePin(RC522_MOSI_GPIO_Port, RC522_MOSI_Pin, value ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
-/* Sample one logic level from the software SPI MISO pin. */
+/* 从 MISO 引脚读取当前 0/1 电平。 */
 static uint8_t RC522_MisoRead(void)
 {
   return (uint8_t)(HAL_GPIO_ReadPin(RC522_MISO_GPIO_Port, RC522_MISO_Pin) == GPIO_PIN_SET ? 1U : 0U);
@@ -89,6 +95,7 @@ static uint8_t RC522_MisoRead(void)
 
 static uint8_t RC522_SpiTransferByte(uint8_t data)
 {
+  /* 以 MSB first 方式发送并接收 1 个字节。 */
   uint8_t bit;
   uint8_t rx = 0U;
 
@@ -111,6 +118,7 @@ static uint8_t RC522_SpiTransferByte(uint8_t data)
 
 static void RC522_WriteRegister(uint8_t reg, uint8_t value)
 {
+  /* RC522 写寄存器：先发地址，再发数据。 */
   uint8_t addr = (uint8_t)((reg << 1U) & 0x7EU);
 
   RC522_CsLow();
@@ -121,6 +129,7 @@ static void RC522_WriteRegister(uint8_t reg, uint8_t value)
 
 static uint8_t RC522_ReadRegister(uint8_t reg)
 {
+  /* RC522 读寄存器：地址最高位置 1，随后读回 1 字节。 */
   uint8_t addr = (uint8_t)(((reg << 1U) & 0x7EU) | 0x80U);
   uint8_t value;
 
@@ -134,16 +143,19 @@ static uint8_t RC522_ReadRegister(uint8_t reg)
 
 static void RC522_SetBitMask(uint8_t reg, uint8_t mask)
 {
+  /* 将寄存器中的某些位位置 1，其他位保持不变。 */
   RC522_WriteRegister(reg, (uint8_t)(RC522_ReadRegister(reg) | mask));
 }
 
 static void RC522_ClearBitMask(uint8_t reg, uint8_t mask)
 {
+  /* 将寄存器中的某些位清 0，其他位保持不变。 */
   RC522_WriteRegister(reg, (uint8_t)(RC522_ReadRegister(reg) & (uint8_t)(~mask)));
 }
 
 static void RC522_CalculateCrc(const uint8_t* inData, uint8_t len, uint8_t outData[2])
 {
+  /* 使用 RC522 芯片内部 CRC 单元计算给定数据的 CRC 结果。 */
   uint8_t i;
   uint8_t n;
 
@@ -174,6 +186,11 @@ static uint8_t RC522_ToCard(uint8_t command,
                             uint8_t* backData,
                             uint16_t* backLen)
 {
+  /*
+   * 这是与卡片交互的核心收发函数。
+   * 它会把待发送数据装入 FIFO，启动指定命令，等待完成标志，
+   * 然后再把返回数据从 FIFO 中读出。
+   */
   uint8_t status = RC522_STATUS_ERR;
   uint8_t irqEn = 0x00U;
   uint8_t waitIrq = 0x00U;

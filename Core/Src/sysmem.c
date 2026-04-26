@@ -25,6 +25,14 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/*
+ * 这个文件主要提供 _sbrk()，也就是堆空间增长接口。
+ * malloc / calloc / realloc 等动态内存函数，最终都会依赖它来申请堆。
+ *
+ * 在裸机环境下，没有操作系统帮我们管理堆，因此这里需要根据
+ * 链接脚本里的 RAM 边界和保留栈空间，自行限制堆的可增长范围。
+ */
+
 /**
  * Pointer to the current high watermark of the heap usage
  */
@@ -53,6 +61,11 @@ static uint8_t *__sbrk_heap_end = NULL;
  */
 void *_sbrk(ptrdiff_t incr)
 {
+  /*
+   * 堆从链接脚本定义的 _end 开始向上增长；
+   * 主栈从 RAM 顶端附近向下使用。
+   * 因此必须防止堆顶越过为主栈预留的安全边界。
+   */
   extern uint8_t _end; /* Symbol defined in the linker script */
   extern uint8_t _estack; /* Symbol defined in the linker script */
   extern uint32_t _Min_Stack_Size; /* Symbol defined in the linker script */
@@ -63,12 +76,14 @@ void *_sbrk(ptrdiff_t incr)
   /* Initialize heap end at first call */
   if (NULL == __sbrk_heap_end)
   {
+    /* 第一次调用时，把堆顶初始化到链接脚本给出的 _end。 */
     __sbrk_heap_end = &_end;
   }
 
   /* Protect heap from growing into the reserved MSP stack */
   if (__sbrk_heap_end + incr > max_heap)
   {
+    /* 如果继续增长会撞到预留栈空间，则返回内存不足。 */
     errno = ENOMEM;
     return (void *)-1;
   }
@@ -80,8 +95,6 @@ void *_sbrk(ptrdiff_t incr)
 }
 
 #if defined(__PICOLIBC__)
-  // Picolibc expects syscalls without the leading underscore.
-  // This creates a strong alias so that
-  // calls to `sbrk()` are resolved to our `_sbrk()` implementation.
+  /* Picolibc 期望使用不带下划线的 sbrk，这里做一个强别名映射。 */
   __strong_reference(_sbrk, sbrk);
 #endif

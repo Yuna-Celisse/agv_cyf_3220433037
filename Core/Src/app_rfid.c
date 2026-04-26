@@ -2,7 +2,12 @@
 
 #include "rc522.h"
 
-/* RC522 polling is debounced so the same card is not retriggered repeatedly. */
+/*
+ * RFID 模块对 RC522 做了一层业务封装：
+ * - 轮询读 UID；
+ * - 识别是否是已登记卡片；
+ * - 避免同一张卡持续贴近时被重复触发。
+ */
 
 #define APP_RFID_POLL_INTERVAL_MS 100U /* RFID 轮询最小间隔（ms） */
 
@@ -13,7 +18,7 @@ static uint8_t has_last_uid = 0U;                    /* 是否已有上一次 UI
 static const uint8_t uid_card_a[APP_RFID_UID_LEN] = {0x16U, 0x15U, 0x12U, 0x07U}; /* A 卡 UID */
 static const uint8_t uid_card_b[APP_RFID_UID_LEN] = {0x1EU, 0xF1U, 0x2BU, 0x07U}; /* B 卡 UID */
 
-/* Compare 4-byte UIDs without pulling in heavier library helpers. */
+/* 比较两个 4 字节 UID 是否完全一致。 */
 static uint8_t AppRfid_UidEquals(const uint8_t left[APP_RFID_UID_LEN], const uint8_t right[APP_RFID_UID_LEN])
 {
   uint8_t i;
@@ -29,7 +34,7 @@ static uint8_t AppRfid_UidEquals(const uint8_t left[APP_RFID_UID_LEN], const uin
   return 1U; /* 全部字节相同 */
 }
 
-/* Copy helper keeps the module independent from memcpy. */
+/* 逐字节复制 UID，避免额外依赖标准库内存函数。 */
 static void AppRfid_UidCopy(uint8_t dst[APP_RFID_UID_LEN], const uint8_t src[APP_RFID_UID_LEN])
 {
   uint8_t i;
@@ -40,7 +45,7 @@ static void AppRfid_UidCopy(uint8_t dst[APP_RFID_UID_LEN], const uint8_t src[APP
   }
 }
 
-/* Map known card UIDs into business-level destination IDs. */
+/* 把底层 UID 映射成业务层的卡片编号，例如 A 卡、B 卡。 */
 static uint8_t AppRfid_ResolveCardId(const uint8_t uid[APP_RFID_UID_LEN])
 {
   if (uid == 0)
@@ -61,7 +66,7 @@ static uint8_t AppRfid_ResolveCardId(const uint8_t uid[APP_RFID_UID_LEN])
   return APP_RFID_CARD_ID_NONE; /* 未登记卡片 */
 }
 
-/* Reset cache state so the first detected card becomes a new event. */
+/* 初始化 RC522，并清空上一次卡号缓存。 */
 void AppRfid_Init(void)
 {
   RC522_Init();               /* 初始化 RC522 硬件与寄存器 */
@@ -69,7 +74,11 @@ void AppRfid_Init(void)
   last_rfid_poll_tick = 0U;   /* 重置轮询时间 */
 }
 
-/* Poll at a bounded rate and emit only meaningful card events. */
+/*
+ * 轮询读卡。
+ * 只有在允许轮询、到达轮询周期且成功读到卡时，才会向上层返回事件；
+ * 同时利用 last_uid 去重，避免同一张卡被反复当成新卡。
+ */
 uint8_t AppRfid_Poll(uint32_t now_ms, uint8_t allow_poll, AppRfidEvent_t *event)
 {
   uint8_t uid[APP_RFID_UID_LEN];
