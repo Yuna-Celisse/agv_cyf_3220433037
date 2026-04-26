@@ -190,3 +190,9 @@ void AppOled_ShowDistance(uint8_t has_distance, uint16_t distance_cm)
   AppOled_LoadLine(oled_line, line_buf, 8U); /* 主行显示超声波距离 */
   AppOled_UpdateMainLine();
 }
+
+void AppOled_ShowStatus(const uint8_t *status, uint8_t len)
+{
+  AppOled_LoadLine(oled_rfid_line, status, len);
+  AppOled_UpdateRfidLine();
+}

@@ -436,6 +436,11 @@
               <FilePath>../Core/Src/app_ultrasonic.c</FilePath>
             </File>
             <File>
+              <FileName>app_vehicle.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_vehicle.c</FilePath>
+            </File>
+            <File>
               <FileName>app_rfid.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/app_rfid.c</FilePath>
