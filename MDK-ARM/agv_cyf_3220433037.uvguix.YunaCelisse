@@ -102,8 +102,8 @@
       </MaxPosition>
       <NormalPosition>
         <Top>26</Top>
-        <Left>26</Left>
-        <Right>1466</Right>
+        <Left>1946</Left>
+        <Right>3386</Right>
         <Bottom>779</Bottom>
       </NormalPosition>
     </WindowPosition>
@@ -1851,8 +1851,8 @@
       </ToolBar>
       <ControlBarsSummary>
         <Bars>0</Bars>
-        <ScreenCX>1707</ScreenCX>
-        <ScreenCY>1067</ScreenCY>
+        <ScreenCX>1920</ScreenCX>
+        <ScreenCY>1080</ScreenCY>
       </ControlBarsSummary>
     </ViewEx>
     <ViewEx>
