@@ -113,6 +113,11 @@ static uint8_t AppVehicle_IsUltrasonicMotionState(VehicleState_t state)
                    (state == VEHICLE_AVOID_RETURN_FORWARD));
 }
 
+static uint8_t AppVehicle_IsUltrasonicFaulted(void)
+{
+  return (uint8_t)(s_ultrasonic_invalid_count >= HCSR04_INVALID_STOP_COUNT);
+}
+
 static void AppVehicle_ResetUltrasonicState(void)
 {
   s_last_distance_cm = 0U;
@@ -376,7 +381,9 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
   AppVehicle_RestoreTargetStatus();
   AppServo_SetAngle((uint16_t)((s_payload_raised != 0U) ? SERVO_STOP_END_ANGLE_DEG : SERVO_RUN_ANGLE_DEG));
 
-  if ((s_has_last_distance != 0U) && (s_last_distance_cm <= OBSTACLE_THRESHOLD_CM))
+  if ((AppVehicle_IsUltrasonicFaulted() == 0U) &&
+      (s_has_last_distance != 0U) &&
+      (s_last_distance_cm <= OBSTACLE_THRESHOLD_CM))
   {
     s_vehicle_state = VEHICLE_AVOID_LEFT;
     s_avoid_line_seen_count = 0U;
@@ -560,23 +567,6 @@ static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
 
 static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
 {
-  if ((AppVehicle_IsUltrasonicMotionState(s_vehicle_state) != 0U) &&
-      (s_ultrasonic_invalid_count >= HCSR04_INVALID_STOP_COUNT))
-  {
-    AppVehicle_StopMotion();
-    AppVehicle_ShowAvoidStatus((const uint8_t *)"US:FAIL", 7U);
-    if (s_vehicle_state == VEHICLE_LINE_FOLLOW)
-    {
-      s_last_line_pid_tick = now;
-    }
-    else
-    {
-      s_state_start_tick = now;
-    }
-    AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
-    return;
-  }
-
   switch (s_vehicle_state)
   {
     case VEHICLE_WAIT_CARD:
