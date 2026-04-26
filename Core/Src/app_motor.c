@@ -4,6 +4,8 @@
 #include "main.h"
 #include "tim.h"
 
+/* Motor control supports both open-loop PWM and a simple encoder PI loop. */
+
 #define MOTOR_CONTROL_INTERVAL_MS 20U /* 闭环控制周期（ms） */
 #define MOTOR_MAX_TARGET_PPS 900       /* 目标速度上限（pulse per second） */
 #define MOTOR_MIN_ACTIVE_DUTY_PM 40    /* 闭环运行时最小有效占空比（千分比） */
@@ -28,6 +30,7 @@ static int32_t s_right_duty_pm = 0;            /* 右轮当前输出占空比命
 static uint8_t s_left_no_feedback_count = 0U;  /* 左轮连续无反馈计数 */
 static uint8_t s_right_no_feedback_count = 0U; /* 右轮连续无反馈计数 */
 
+/* Shared saturation helper for duty, integral and other bounded values. */
 static int32_t AppMotor_ClampI32(int32_t value, int32_t min_value, int32_t max_value)
 {
   if (value < min_value)
@@ -41,6 +44,7 @@ static int32_t AppMotor_ClampI32(int32_t value, int32_t min_value, int32_t max_v
   return value;       /* 在范围内原样返回 */
 }
 
+/* Reset PI state whenever the control mode or enable state changes. */
 static void AppMotor_ResetLoopState(void)
 {
   AppEncoder_Counts_t counts = AppEncoder_GetCounts();
@@ -56,6 +60,7 @@ static void AppMotor_ResetLoopState(void)
   s_right_no_feedback_count = 0U;
 }
 
+/* STBY gates the driver chip, so disable must also clear internal state. */
 void AppMotor_SetEnable(uint8_t enable)
 {
   if (enable != 0U)
@@ -71,6 +76,7 @@ void AppMotor_SetEnable(uint8_t enable)
   HAL_GPIO_WritePin(STBY_GPIO_Port, STBY_Pin, GPIO_PIN_RESET); /* 最后拉低 STBY 关断驱动 */
 }
 
+/* Both H-bridges are configured for the project's forward direction. */
 void AppMotor_SetForwardDirection(void)
 {
   HAL_GPIO_WritePin(AIN1_GPIO_Port, AIN1_Pin, GPIO_PIN_SET);    /* A桥方向：前进 */
@@ -79,6 +85,7 @@ void AppMotor_SetForwardDirection(void)
   HAL_GPIO_WritePin(BIN1_GPIO_Port, BIN2_Pin, GPIO_PIN_RESET);
 }
 
+/* Convert per-mille duty commands into timer compare values. */
 void AppMotor_SetDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
 {
   uint32_t arr = (uint32_t)__HAL_TIM_GET_AUTORELOAD(&htim1);
@@ -106,18 +113,21 @@ void AppMotor_SetDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
 #endif
 }
 
+/* Changing loop mode resets history to avoid a sudden output jump. */
 void AppMotor_SetClosedLoop(uint8_t enable)
 {
   s_closed_loop_enable = (enable != 0U) ? 1U : 0U; /* 统一成 0/1 */
   AppMotor_ResetLoopState();                       /* 切模式后重置状态，避免突变 */
 }
 
+/* Targets are expressed directly in encoder pulses per second. */
 void AppMotor_SetTargetSpeed(int16_t left_pulse_per_sec, int16_t right_pulse_per_sec)
 {
   s_left_target_pps = left_pulse_per_sec;   /* 设置左轮目标速度 */
   s_right_target_pps = right_pulse_per_sec; /* 设置右轮目标速度 */
 }
 
+/* Reuse the closed-loop speed path by mapping duty to a speed target. */
 void AppMotor_SetTargetFromDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
 {
   if (duty_left_pm > 1000U)
@@ -138,6 +148,7 @@ void AppMotor_SetTargetFromDuty(uint16_t duty_left_pm, uint16_t duty_right_pm)
   }
 }
 
+/* Cooperative PI update driven from the main loop at a fixed interval. */
 void AppMotor_Task(uint32_t now_ms)
 {
   AppEncoder_Counts_t counts;

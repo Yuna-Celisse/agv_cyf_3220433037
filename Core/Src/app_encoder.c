@@ -2,6 +2,8 @@
 
 #include "main.h"
 
+/* This module counts wheel encoder pulses with GPIO EXTI interrupts. */
+
 /* Wiring used by this firmware:
  * E1A -> PA12, E1B -> PA15
  * E2A -> PA10, E2B -> PA11
@@ -21,6 +23,7 @@
 static volatile int32_t s_left_count = 0;  /* 左轮累计编码器计数 */
 static volatile int32_t s_right_count = 0; /* 右轮累计编码器计数 */
 
+/* Determine direction from the A/B phase relationship at the edge time. */
 static int8_t AppEncoder_ReadStep(GPIO_TypeDef *a_port,
                                   uint16_t a_pin,
                                   GPIO_TypeDef *b_port,
@@ -34,6 +37,7 @@ static int8_t AppEncoder_ReadStep(GPIO_TypeDef *a_port,
   return (int8_t)(step * dir_sign); /* 再乘轮子方向修正符号，得到最终步进 */
 }
 
+/* Encoder A uses EXTI edges, encoder B is sampled to infer direction. */
 void AppEncoder_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -64,6 +68,7 @@ void AppEncoder_Init(void)
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);           /* 使能中断 */
 }
 
+/* Only A-phase edges update counts; B-phase is read as direction context. */
 void AppEncoder_HandleExti(uint16_t gpio_pin)
 {
   if (gpio_pin == ENC_LEFT_A_Pin)
@@ -86,6 +91,7 @@ void AppEncoder_HandleExti(uint16_t gpio_pin)
   }
 }
 
+/* Clear both counters atomically because ISR code updates them too. */
 void AppEncoder_Reset(void)
 {
   __disable_irq();  /* 关中断，避免读写竞争 */
@@ -94,6 +100,7 @@ void AppEncoder_Reset(void)
   __enable_irq();   /* 开中断 */
 }
 
+/* Snapshot counters atomically so the caller sees a consistent pair. */
 AppEncoder_Counts_t AppEncoder_GetCounts(void)
 {
   AppEncoder_Counts_t counts;

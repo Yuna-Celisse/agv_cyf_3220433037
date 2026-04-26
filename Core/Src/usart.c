@@ -20,6 +20,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "usart.h"
 
+/* USART3 is used as the serial debug and telemetry channel. */
+
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
@@ -28,6 +30,7 @@ UART_HandleTypeDef huart3;
 
 /* USART3 init function */
 
+/* Standard 115200-8-N-1 configuration for logs and text reports. */
 void MX_USART3_UART_Init(void)
 {
 
@@ -56,6 +59,7 @@ void MX_USART3_UART_Init(void)
 
 }
 
+/* Configure the GPIO pins and IRQ used by USART3. */
 void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 {
 

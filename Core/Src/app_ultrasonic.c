@@ -4,6 +4,8 @@
 #include "tim.h"
 #include "usart.h"
 
+/* HC-SR04 timing uses TIM2 as a 1 us free-running counter. */
+
 #define APP_HCSR04_TIMEOUT_MS 35U        /* 一次测量的超时时间（ms） */
 #define APP_HCSR04_CM_PER_US_DIVISOR 58U /* 回波脉宽换算厘米的除数（经验值） */
 #define APP_HCSR04_MIN_VALID_US 100U     /* 判定为有效回波的最小脉宽（us） */
@@ -18,6 +20,7 @@ static volatile uint32_t hcsr04_trigger_tick = 0U; /* 触发测量时刻（ms）
 static volatile uint8_t hcsr04_timeout_flag = 0U;  /* 本次测量是否超时 */
 static uint8_t app_us_uart_report_enable = 0U;     /* 串口打印开关 */
 
+/* Busy-wait on TIM2 so trigger timing stays in the microsecond range. */
 static void AppUltrasonic_DelayUs(uint16_t us)
 {
   uint16_t start = (uint16_t)__HAL_TIM_GET_COUNTER(&htim2); /* 记录起始计数 */
@@ -28,6 +31,7 @@ static void AppUltrasonic_DelayUs(uint16_t us)
   }
 }
 
+/* Optional UART report for tuning and debugging sensor behavior. */
 static void AppUltrasonic_SendDistance(uint16_t distance_cm)
 {
   uint8_t tx_buf[] = "US:000cm\r\n";
@@ -49,6 +53,7 @@ static void AppUltrasonic_SendDistance(uint16_t distance_cm)
   (void)HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 20U); /* 发送距离文本 */
 }
 
+/* Emit a readable failure message when the echo is missing or invalid. */
 static void AppUltrasonic_SendNoEcho(void)
 {
   uint8_t tx_buf[] = "US:NONE\r\n";
@@ -61,6 +66,7 @@ static void AppUltrasonic_SendNoEcho(void)
   (void)HAL_UART_Transmit(&huart3, tx_buf, (uint16_t)(sizeof(tx_buf) - 1U), 20U); /* 发送无回波文本 */
 }
 
+/* TRIG is a GPIO output, ECHO is captured with a dual-edge EXTI pin. */
 void AppUltrasonic_Init(uint8_t uart_report_enable)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -85,6 +91,7 @@ void AppUltrasonic_Init(uint8_t uart_report_enable)
   HAL_NVIC_EnableIRQ(EXTI1_IRQn);           /* 使能 EXTI1 中断 */
 }
 
+/* Generate the 10 us trigger pulse required by the HC-SR04. */
 void AppUltrasonic_StartMeasure(void)
 {
   if (hcsr04_busy != 0U)
@@ -104,6 +111,7 @@ void AppUltrasonic_StartMeasure(void)
   hcsr04_trigger_tick = HAL_GetTick(); /* 记录触发时刻用于超时判断 */
 }
 
+/* Timeout recovery keeps the state machine from waiting forever. */
 void AppUltrasonic_Task(uint32_t now_ms)
 {
   if ((hcsr04_busy != 0U) && ((now_ms - hcsr04_trigger_tick) >= APP_HCSR04_TIMEOUT_MS))
@@ -113,6 +121,7 @@ void AppUltrasonic_Task(uint32_t now_ms)
   }
 }
 
+/* Rising edge stores the start time, falling edge closes the pulse width. */
 void AppUltrasonic_HandleEchoExti(uint16_t gpio_pin)
 {
   if (gpio_pin != HCSR04_ECHO_Pin)
@@ -148,6 +157,7 @@ uint8_t AppUltrasonic_IsBusy(void)
   return hcsr04_busy; /* 返回测量忙状态 */
 }
 
+/* Consume exactly one completed measurement or timeout event per call. */
 uint8_t AppUltrasonic_FetchResult(uint16_t *distance_cm, uint8_t *has_distance)
 {
   uint16_t pulse_width_us;

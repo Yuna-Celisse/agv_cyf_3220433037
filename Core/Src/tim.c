@@ -20,6 +20,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "tim.h"
 
+/* TIM1 drives motors, TIM2 provides us timing, TIM4 drives the servo. */
+
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
@@ -29,6 +31,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 
 /* TIM1 init function */
+/* PWM base for left/right motor duty output. */
 void MX_TIM1_Init(void)
 {
 
@@ -103,6 +106,7 @@ void MX_TIM1_Init(void)
 
 }
 /* TIM2 init function */
+/* Free-running 1 MHz timer used for ultrasonic microsecond timing. */
 void MX_TIM2_Init(void)
 {
 
@@ -144,6 +148,7 @@ void MX_TIM2_Init(void)
 }
 
 /* TIM4 init function */
+/* 20 ms PWM period for the servo control signal. */
 void MX_TIM4_Init(void)
 {
 
@@ -198,6 +203,7 @@ void MX_TIM4_Init(void)
 
 }
 
+/* Enable peripheral clocks before the timers are started elsewhere. */
 void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
 {
 
@@ -235,6 +241,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
   /* USER CODE END TIM4_MspInit 1 */
   }
 }
+/* Configure timer output pins after the timer core is initialized. */
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
 {
 

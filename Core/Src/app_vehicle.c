@@ -14,6 +14,8 @@
 
 #include <stdio.h>
 
+/* This module owns the full vehicle mission state machine. */
+
 #define ENABLE_RFID_UART_REPORT 0U
 #define ENABLE_ULTRASONIC_UART_REPORT 1U
 #define CARD_STANDBY_DELAY_MS 2000U
@@ -103,6 +105,7 @@ static uint32_t s_state_start_tick = 0U;
 static uint32_t s_stop_start_tick = 0U;
 static uint32_t s_last_encoder_report_tick = 0U;
 
+/* Only movement states should treat bad ultrasonic data as a fault. */
 static uint8_t AppVehicle_IsUltrasonicMotionState(VehicleState_t state)
 {
   return (uint8_t)((state == VEHICLE_LINE_FOLLOW) ||
@@ -113,11 +116,13 @@ static uint8_t AppVehicle_IsUltrasonicMotionState(VehicleState_t state)
                    (state == VEHICLE_AVOID_RETURN_FORWARD));
 }
 
+/* Repeated invalid readings are treated as a sensor fault condition. */
 static uint8_t AppVehicle_IsUltrasonicFaulted(void)
 {
   return (uint8_t)(s_ultrasonic_invalid_count >= HCSR04_INVALID_STOP_COUNT);
 }
 
+/* Clear filtered distance history and fault counters together. */
 static void AppVehicle_ResetUltrasonicState(void)
 {
   s_last_distance_cm = 0U;
@@ -126,6 +131,7 @@ static void AppVehicle_ResetUltrasonicState(void)
   s_ultrasonic_invalid_count = 0U;
 }
 
+/* Reset line-crossing bookkeeping whenever a mission phase changes. */
 static void AppVehicle_ResetLineTracking(void)
 {
   s_crossed_line_count = 0U;
@@ -137,23 +143,27 @@ static void AppVehicle_ResetLineTracking(void)
   s_stop_is_final = 0U;
 }
 
+/* Central helper so every stop path disables the same hardware outputs. */
 static void AppVehicle_StopMotion(void)
 {
   AppMotor_SetEnable(0U);
   AppMotor_SetDuty(0U, 0U);
 }
 
+/* A short recovery window relaxes steering after obstacle avoidance. */
 static uint8_t AppVehicle_IsLineRecovering(uint32_t now)
 {
   return (uint8_t)((int32_t)(s_line_recover_until_tick - now) > 0);
 }
 
+/* Avoidance temporarily owns the status line on the OLED. */
 static void AppVehicle_ShowAvoidStatus(const uint8_t *text, uint8_t len)
 {
   AppOled_ShowStatus(text, len);
   s_oled_showing_avoid = 1U;
 }
 
+/* Periodic encoder reporting is useful when tuning drive behavior. */
 static void AppVehicle_ReportEncoderCounts(uint32_t now)
 {
 #if ENABLE_ENCODER_UART_REPORT
@@ -182,6 +192,7 @@ static void AppVehicle_ReportEncoderCounts(uint32_t now)
 #endif
 }
 
+/* Restore the destination label after temporary warning/status text. */
 static void AppVehicle_RestoreTargetStatus(void)
 {
   if (s_oled_showing_avoid != 0U)
@@ -191,6 +202,7 @@ static void AppVehicle_RestoreTargetStatus(void)
   }
 }
 
+/* Differential duty makes the robot pivot while still creeping forward. */
 static void AppVehicle_SetAvoidTurn(uint8_t turn_left, uint16_t fast_pm, uint16_t slow_pm)
 {
   if (turn_left != 0U)
@@ -203,6 +215,7 @@ static void AppVehicle_SetAvoidTurn(uint8_t turn_left, uint16_t fast_pm, uint16_
   }
 }
 
+/* A valid RFID card selects the stop line and arms the whole mission. */
 static void AppVehicle_StartMission(uint8_t card_id)
 {
   if ((card_id != CARD_ID_A) && (card_id != CARD_ID_B))
@@ -228,6 +241,7 @@ static void AppVehicle_StartMission(uint8_t card_id)
   s_oled_showing_avoid = 0U;
 }
 
+/* Return the robot to the idle state without power-cycling the board. */
 static void AppVehicle_ResetMission(void)
 {
   s_vehicle_state = VEHICLE_WAIT_CARD;
@@ -246,6 +260,7 @@ static void AppVehicle_ResetMission(void)
   AppOled_ClearAction();
 }
 
+/* Poll RFID only while idle so motion timing stays predictable. */
 static void AppVehicle_ProcessRfid(uint32_t now)
 {
 #if ENABLE_NON_MOTION_FEATURES && ENABLE_RFID_FEATURES
@@ -275,6 +290,7 @@ static void AppVehicle_ProcessRfid(uint32_t now)
 #endif
 }
 
+/* Filter spikes and maintain a last-known-good distance estimate. */
 static void AppVehicle_ProcessUltrasonicResult(void)
 {
   uint16_t distance_cm;
@@ -347,6 +363,7 @@ static void AppVehicle_ProcessUltrasonicResult(void)
   }
 }
 
+/* Drive the ultrasonic sensor cooperatively from the main loop. */
 static void AppVehicle_PollUltrasonic(uint32_t now)
 {
   uint32_t ultrasonic_interval_ms = HCSR04_MEASURE_INTERVAL_MS;
@@ -375,6 +392,7 @@ static void AppVehicle_PollUltrasonic(uint32_t now)
   }
 }
 
+/* Follow the line, watch for obstacles and count full-line crossings. */
 static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
 {
   uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
@@ -503,6 +521,7 @@ static void AppVehicle_RunLineFollow(uint32_t now, uint8_t ir_mask)
   AppOled_ShowDistance(s_has_last_distance, s_last_distance_cm);
 }
 
+/* Shared stop handler for pickup and final arrival stages. */
 static void AppVehicle_RunStopping(uint32_t now)
 {
   uint32_t elapsed = now - s_stop_start_tick;
@@ -541,6 +560,7 @@ static void AppVehicle_RunStopping(uint32_t now)
   AppServo_SetAngle(SERVO_STOP_END_ANGLE_DEG);
 }
 
+/* Final avoidance stage searches for the line and rejoins it smoothly. */
 static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
 {
   uint8_t norm_mask = AppLine_NormalizeMask(ir_mask);
@@ -576,6 +596,7 @@ static void AppVehicle_RunAvoidRight(uint32_t now, uint8_t ir_mask)
   }
 }
 
+/* Main mission state machine: idle, follow line, stop, avoid obstacle. */
 static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
 {
   switch (s_vehicle_state)
@@ -664,6 +685,7 @@ static void AppVehicle_RunStateMachine(uint32_t now, uint8_t ir_mask)
   }
 }
 
+/* Initialize hardware-facing modules in the order the app depends on them. */
 void AppVehicle_Init(void)
 {
   AppEncoder_Init();
@@ -699,6 +721,7 @@ void AppVehicle_Init(void)
   AppVehicle_ResetMission();
 }
 
+/* Single cooperative task called forever from main(). */
 void AppVehicle_Task(void)
 {
   uint32_t now = HAL_GetTick();

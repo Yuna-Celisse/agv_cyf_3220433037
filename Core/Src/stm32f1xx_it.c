@@ -22,6 +22,7 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+/* ISRs are intentionally thin and forward work into HAL or app callbacks. */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -182,6 +183,7 @@ void PendSV_Handler(void)
   */
 void SysTick_Handler(void)
 {
+  /* Keep the HAL tick updated for delay and scheduler-style timing code. */
   /* USER CODE BEGIN SysTick_IRQn 0 */
 
   /* USER CODE END SysTick_IRQn 0 */
@@ -203,6 +205,7 @@ void SysTick_Handler(void)
   */
 void EXTI1_IRQHandler(void)
 {
+  /* EXTI1 is currently shared by the ultrasonic ECHO pin. */
   /* USER CODE BEGIN EXTI1_IRQn 0 */
 
   /* USER CODE END EXTI1_IRQn 0 */
@@ -217,6 +220,7 @@ void EXTI1_IRQHandler(void)
   */
 void EXTI15_10_IRQHandler(void)
 {
+  /* EXTI15_10 currently serves both wheel encoder A-phase inputs. */
   /* USER CODE BEGIN EXTI15_10_IRQn 0 */
 
   /* USER CODE END EXTI15_10_IRQn 0 */
@@ -232,6 +236,7 @@ void EXTI15_10_IRQHandler(void)
   */
 void USART3_IRQHandler(void)
 {
+  /* Forward serial IRQ handling into the HAL driver. */
   /* USER CODE BEGIN USART3_IRQn 0 */
 
   /* USER CODE END USART3_IRQn 0 */

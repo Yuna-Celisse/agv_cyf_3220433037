@@ -1,7 +1,10 @@
 #include "app_line.h"
 
+/* Line sensors are read as a 5-bit mask and converted into a tracking error. */
+
 #define APP_LINE_IR_ACTIVE_LOW 1U /* 红外巡线传感器是否低电平有效：1=低有效，0=高有效 */
 
+/* Pack IR1..IR5 into bit0..bit4 for later processing. */
 uint8_t AppLine_ReadMask(void)
 {
   uint8_t mask = 0U; /* 5路红外状态位图，bit0~bit4 对应 IR1~IR5 */
@@ -30,6 +33,7 @@ uint8_t AppLine_ReadMask(void)
   return mask; /* 返回原始电平位图 */
 }
 
+/* Convert raw electrical level into a logical "line detected" bit mask. */
 uint8_t AppLine_NormalizeMask(uint8_t raw_mask)
 {
 #if APP_LINE_IR_ACTIVE_LOW
@@ -39,6 +43,7 @@ uint8_t AppLine_NormalizeMask(uint8_t raw_mask)
 #endif
 }
 
+/* Compute a weighted average error without floating-point math. */
 uint8_t AppLine_ComputeErrorX10(uint8_t raw_mask, int16_t *error_x10)
 {
   uint8_t mask;

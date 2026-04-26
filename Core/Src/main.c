@@ -27,6 +27,7 @@
 #include "app_encoder.h"
 #include "app_ultrasonic.h"
 #include "app_vehicle.h"
+/* Main only performs board startup and then hands control to AppVehicle. */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,19 +62,23 @@ void SystemClock_Config(void);
   */
 int main(void)
 {
+  /* Initialize HAL and the system clock before touching peripherals. */
   HAL_Init();
   SystemClock_Config();
 
+  /* Bring up the CubeMX-generated peripheral drivers used by the app layer. */
   MX_GPIO_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
   MX_TIM4_Init();
   MX_USART3_UART_Init();
 
+  /* Initialize the high-level vehicle application state machine. */
   AppVehicle_Init();
 
   while (1)
   {
+    /* Run the cooperative main loop forever. */
     AppVehicle_Task();
   }
 }
@@ -87,6 +92,7 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+  /* Use external HSE + PLL to run the MCU at 72 MHz. */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
@@ -115,6 +121,7 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
+  /* Dispatch shared EXTI callbacks to the modules that own those pins. */
   AppUltrasonic_HandleEchoExti(GPIO_Pin);
   AppEncoder_HandleExti(GPIO_Pin);
 }

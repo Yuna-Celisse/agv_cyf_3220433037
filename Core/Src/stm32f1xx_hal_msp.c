@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 /* USER CODE BEGIN Includes */
+/* Global MSP init only enables core clocks and pin remapping. */
 
 /* USER CODE END Includes */
 
@@ -61,6 +62,7 @@
   */
 void HAL_MspInit(void)
 {
+  /* Enable AFIO/PWR and free JTAG pins while keeping SWD available. */
 
   /* USER CODE BEGIN MspInit 0 */
 

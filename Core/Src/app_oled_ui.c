@@ -3,6 +3,8 @@
 #include "oled.h"
 #include "usart.h"
 
+/* This wrapper keeps OLED text updates small, cached and app-focused. */
+
 #define APP_OLED_TEXT_X_OFFSET 16U
 #define APP_OLED_LINE_LEN 16U
 #define APP_OLED_LINE_BUF_LEN (APP_OLED_LINE_LEN + 1U)
@@ -14,6 +16,7 @@ static uint8_t oled_last_rfid_line[APP_OLED_LINE_BUF_LEN] = {0};
 static uint8_t oled_action_line[APP_OLED_LINE_BUF_LEN] = {0};
 static uint8_t oled_last_action_line[APP_OLED_LINE_BUF_LEN] = {0};
 
+/* Small helper for rendering RFID UID bytes as uppercase hex. */
 static char AppOled_HexDigit(uint8_t value)
 {
   if (value < 10U)
@@ -24,6 +27,7 @@ static char AppOled_HexDigit(uint8_t value)
   return (char)('A' + (value - 10U));
 }
 
+/* UART is used here as a lightweight debug/reporting channel. */
 static void AppOled_SendAsync(const uint8_t *data, uint16_t len)
 {
   if ((data == 0) || (len == 0U))
@@ -34,6 +38,7 @@ static void AppOled_SendAsync(const uint8_t *data, uint16_t len)
   (void)HAL_UART_Transmit(&huart3, (uint8_t *)data, len, 20U);
 }
 
+/* Copy text into a fixed-width line buffer and keep it NUL-terminated. */
 static void AppOled_LoadLine(uint8_t *dst, const uint8_t *line, uint8_t len)
 {
   uint8_t i;
@@ -87,6 +92,7 @@ static void AppOled_RefreshActionLine(void)
   OLED_RefreshPage(5U);
 }
 
+/* Refresh the OLED only when a line really changed to reduce flicker. */
 static void AppOled_UpdateCachedLine(uint8_t *current, uint8_t *last, void (*refresh_fn)(void))
 {
   uint8_t i;
@@ -105,6 +111,7 @@ static void AppOled_UpdateCachedLine(uint8_t *current, uint8_t *last, void (*ref
   }
 }
 
+/* Show the UID on OLED and optionally mirror it to the UART console. */
 void AppOled_ShowUid(const uint8_t uid[4], uint8_t uart_report_enable)
 {
   uint8_t i;
@@ -138,6 +145,7 @@ void AppOled_ShowUid(const uint8_t uid[4], uint8_t uart_report_enable)
   }
 }
 
+/* Default idle UI while waiting for a valid RFID card. */
 void AppOled_ShowSwipePrompt(void)
 {
   AppOled_LoadLine(oled_line, (const uint8_t *)"SWIPE CARD", 10U);
@@ -148,6 +156,7 @@ void AppOled_ShowSwipePrompt(void)
   AppOled_UpdateCachedLine(oled_action_line, oled_last_action_line, AppOled_RefreshActionLine);
 }
 
+/* Update only the destination line after the mission target changes. */
 void AppOled_ShowTarget(uint8_t card_id)
 {
   if (card_id == APP_CARD_ID_A)
@@ -166,6 +175,7 @@ void AppOled_ShowTarget(uint8_t card_id)
   AppOled_UpdateCachedLine(oled_rfid_line, oled_last_rfid_line, AppOled_RefreshRfidLine);
 }
 
+/* Keep ultrasonic distance formatting simple and fixed-width. */
 void AppOled_ShowDistance(uint8_t has_distance, uint16_t distance_cm)
 {
   uint8_t line_buf[] = "US:---cm";

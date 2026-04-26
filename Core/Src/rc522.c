@@ -2,6 +2,8 @@
 
 #include "main.h"
 
+/* RC522 access is implemented with software SPI over GPIO pins. */
+
 #define RC522_STATUS_OK      0U
 #define RC522_STATUS_NOTAG   1U
 #define RC522_STATUS_ERR     2U
@@ -40,6 +42,7 @@
 
 #define RC522_MAX_LEN           16U
 
+/* Short GPIO timing gap used by the bit-banged SPI transactions. */
 static void RC522_SpiDelay(void)
 {
   __NOP();
@@ -48,31 +51,37 @@ static void RC522_SpiDelay(void)
   __NOP();
 }
 
+/* Select the RC522 before each register access. */
 static void RC522_CsLow(void)
 {
   HAL_GPIO_WritePin(RC522_SDA_GPIO_Port, RC522_SDA_Pin, GPIO_PIN_RESET);
 }
 
+/* Release the RC522 after each register access. */
 static void RC522_CsHigh(void)
 {
   HAL_GPIO_WritePin(RC522_SDA_GPIO_Port, RC522_SDA_Pin, GPIO_PIN_SET);
 }
 
+/* Drive the software SPI clock low. */
 static void RC522_SckLow(void)
 {
   HAL_GPIO_WritePin(RC522_SCK_GPIO_Port, RC522_SCK_Pin, GPIO_PIN_RESET);
 }
 
+/* Drive the software SPI clock high. */
 static void RC522_SckHigh(void)
 {
   HAL_GPIO_WritePin(RC522_SCK_GPIO_Port, RC522_SCK_Pin, GPIO_PIN_SET);
 }
 
+/* Output one logic level on the software SPI MOSI pin. */
 static void RC522_MosiWrite(uint8_t value)
 {
   HAL_GPIO_WritePin(RC522_MOSI_GPIO_Port, RC522_MOSI_Pin, value ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
+/* Sample one logic level from the software SPI MISO pin. */
 static uint8_t RC522_MisoRead(void)
 {
   return (uint8_t)(HAL_GPIO_ReadPin(RC522_MISO_GPIO_Port, RC522_MISO_Pin) == GPIO_PIN_SET ? 1U : 0U);

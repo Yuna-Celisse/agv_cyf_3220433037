@@ -21,6 +21,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "gpio.h"
 
+/* GPIO setup covers sensors, motor driver control lines and onboard LED. */
+
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
@@ -41,6 +43,7 @@
 */
 void MX_GPIO_Init(void)
 {
+  /* Configure all static GPIO directions and default output levels once. */
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 

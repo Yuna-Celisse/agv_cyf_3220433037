@@ -2,8 +2,11 @@
 #include "stdlib.h"
 #include "oledfont.h"  	 
 
+/* SSD1306-style OLED driver implemented with software I2C on GPIO pins. */
+
 u8 OLED_GRAM[144][8];
 
+/* Short deterministic delay to shape bit-banged I2C timing. */
 static void OLED_I2C_Delay(void)
 {
 	volatile uint8_t i;
@@ -14,6 +17,7 @@ static void OLED_I2C_Delay(void)
 	}
 }
 
+/* Send one command/data burst prefixed with the SSD1306 control byte. */
 static void OLED_I2C_SendWithControl(u8 control, const u8 *data, u16 len, u8 addr)
 {
 	u16 i;
@@ -31,6 +35,7 @@ static void OLED_I2C_SendWithControl(u8 control, const u8 *data, u16 len, u8 add
 	I2C_Stop();
 }
 
+/* Flush one 128-byte page from GRAM to the panel. */
 static void OLED_WritePageData(u8 page)
 {
 	u8 n;
@@ -47,6 +52,7 @@ static void OLED_WritePageData(u8 page)
 #endif
 }
 
+/* Position the SSD1306 write cursor to a page-aligned column address. */
 static void OLED_SetPageAddress(u8 page)
 {
 	u8 col = (u8)OLED_COL_OFFSET;
@@ -196,6 +202,7 @@ void OLED_Refresh(void)
   }
 }
 
+/* Partial refresh keeps UI updates faster than repainting the full frame. */
 void OLED_RefreshPage(u8 page)
 {
 	if (page >= 8U)
@@ -207,6 +214,7 @@ void OLED_RefreshPage(u8 page)
 	OLED_WritePageData(page);
 }
 
+/* Clear one page in RAM; caller decides when to push it to the panel. */
 void OLED_ClearPage(u8 page)
 {
 	u8 x;
@@ -516,6 +524,7 @@ void OLED_ShowPicture(u8 x0,u8 y0,u8 x1,u8 y1,u8 BMP[])
 	 }
 }
 // OLED initialization sequence
+/* Initialize GPIO and then send the standard SSD1306 power-up sequence. */
 void OLED_Init(void)
 {
 	GPIO_InitTypeDef GPIO_InitStructure = {0};

@@ -3,11 +3,14 @@
 #include "main.h"
 #include "tim.h"
 
+/* The servo is driven by TIM4 CH4 using a standard 20 ms PWM period. */
+
 #define APP_SERVO_MIN_PULSE_US 500U  /* 舵机 0 度附近脉宽（us） */
 #define APP_SERVO_MAX_PULSE_US 2500U /* 舵机 180 度附近脉宽（us） */
 
 static uint16_t s_servo_pulse_us = 1500U; /* 当前输出脉宽缓存 */
 
+/* Start PWM once, then move immediately to the requested default angle. */
 void AppServo_Init(uint16_t default_angle_deg)
 {
   if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4) != HAL_OK)
@@ -18,6 +21,7 @@ void AppServo_Init(uint16_t default_angle_deg)
   AppServo_SetAngle(default_angle_deg); /* 上电后设置默认角度 */
 }
 
+/* Map 0..180 degrees into the servo pulse-width range. */
 void AppServo_SetAngle(uint16_t angle_deg)
 {
   uint16_t clamped_angle = angle_deg; /* 可修改的角度副本 */
@@ -32,6 +36,7 @@ void AppServo_SetAngle(uint16_t angle_deg)
   __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_4, s_servo_pulse_us); /* 更新 PWM 比较值 */
 }
 
+/* Reserved for future motion profiles; currently nothing is time-driven. */
 void AppServo_Task(void)
 {
   (void)s_servo_pulse_us; /* 预留周期任务接口，当前仅占位 */
