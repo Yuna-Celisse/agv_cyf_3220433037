@@ -21,8 +21,10 @@
  * AppVehicle_Task() 就能驱动整车完整运行。
  */
 
-#define ENABLE_RFID_UART_REPORT 0U
-#define ENABLE_ULTRASONIC_UART_REPORT 1U
+#define ENABLE_RFID_UART_REPORT 1U
+#define ENABLE_ULTRASONIC_UART_REPORT 0U
+#define ENABLE_ULTRASONIC_UART_STREAM 0U
+#define ULTRASONIC_UART_REPORT_INTERVAL_MS 100U
 #define CARD_STANDBY_DELAY_MS 2000U
 #define HCSR04_MEASURE_INTERVAL_MS 100U
 #define HCSR04_MOVE_INTERVAL_MS 140U
@@ -37,7 +39,7 @@
 #define ENABLE_MOTION_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
 #define ENABLE_RFID_FEATURES ((SYSTEM_RESTORE_STAGE) >= RESTORE_STAGE_FULL)
 #define ENABLE_MOTOR_CLOSED_LOOP 0U
-#define ENABLE_ENCODER_UART_REPORT 1U
+#define ENABLE_ENCODER_UART_REPORT 0U
 #define ENCODER_UART_REPORT_INTERVAL_MS 100U
 #define LINE_BASE_DUTY_PM 160U
 #define LINE_MIN_DUTY_PM 50U
@@ -109,6 +111,7 @@ static uint32_t s_line_recover_until_tick = 0U;
 static uint32_t s_state_start_tick = 0U;
 static uint32_t s_stop_start_tick = 0U;
 static uint32_t s_last_encoder_report_tick = 0U;
+static uint32_t s_last_ultrasonic_report_tick = 0U;
 
 /*
  * 只有在车辆真正运动时，超声波连续异常才应该被视为故障。
@@ -200,6 +203,37 @@ static void AppVehicle_ReportEncoderCounts(uint32_t now)
                  "ENC L:%ld R:%ld\r\n",
                  (long)counts.left_count,
                  (long)counts.right_count);
+  if (len > 0)
+  {
+    (void)HAL_UART_Transmit(&huart3, (uint8_t *)tx_buf, (uint16_t)len, 20U);
+  }
+#else
+  (void)now;
+#endif
+}
+
+static void AppVehicle_ReportUltrasonic(uint32_t now)
+{
+#if ENABLE_ULTRASONIC_UART_STREAM
+  char tx_buf[16];
+  int len;
+
+  if ((now - s_last_ultrasonic_report_tick) < ULTRASONIC_UART_REPORT_INTERVAL_MS)
+  {
+    return;
+  }
+
+  s_last_ultrasonic_report_tick = now;
+
+  if (s_has_last_distance != 0U)
+  {
+    len = snprintf(tx_buf, sizeof(tx_buf), "US:%03ucm\r\n", (unsigned int)s_last_distance_cm);
+  }
+  else
+  {
+    len = snprintf(tx_buf, sizeof(tx_buf), "US:NONE\r\n");
+  }
+
   if (len > 0)
   {
     (void)HAL_UART_Transmit(&huart3, (uint8_t *)tx_buf, (uint16_t)len, 20U);
@@ -782,6 +816,7 @@ void AppVehicle_Init(void)
 #endif
 
   s_last_ultrasonic_poll_tick = 0U;
+  s_last_ultrasonic_report_tick = 0U;
   AppVehicle_ResetMission();
 }
 
@@ -803,6 +838,7 @@ void AppVehicle_Task(void)
 
   AppVehicle_ProcessRfid(now);
   AppVehicle_PollUltrasonic(now);
+  AppVehicle_ReportUltrasonic(now);
 
 #if !ENABLE_MOTION_FEATURES
 #if ENABLE_NON_MOTION_FEATURES
